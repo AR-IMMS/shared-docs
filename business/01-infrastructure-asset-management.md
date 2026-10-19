@@ -172,13 +172,19 @@ A Maintenance Activity entering `EXECUTE` changes its linked Asset to `MAINTENAN
 3. If valid, AR-IMMS replaces the confirmed placement, releases the previous position, and records the change.
 4. The Node ID remains unchanged. The Agent binding, if any, remains owned by Agent Management and is not silently removed.
 
+A Node in `ACTIVE` or `MAINTENANCE` may be moved. Placement changes do not change lifecycle state or Agent binding; a `RETIRED` Node cannot be placed or moved.
+
 If the destination Rack has insufficient capacity or the position is occupied, the move is rejected and the original placement remains unchanged.
+
+If the requested Rack U is already the Node's current position, the move is a no-op and creates no new placement history or Audit Fact.
 
 ### 9.2 Unmap a Node
 
 1. The IT Admin requests that a Node be removed from its Rack position.
 2. AR-IMMS releases the position and records the unmapping.
 3. The Node remains in the registry as unassigned. Its identity, history, and Rack QR records are retained. Agent unlink and retirement are separate operations.
+
+An `ACTIVE` or `MAINTENANCE` Node may be unmapped. Unmapping does not end a Maintenance Activity, change lifecycle state, or unlink an Agent. A `RETIRED` Node cannot be unmapped because retirement requires it to be unassigned.
 
 ### 9.3 Retire an asset
 
