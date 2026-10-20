@@ -127,7 +127,7 @@ Material changes to locations, asset lifecycle, placement, or Rack QR mapping re
 
 ### BR-14 — Maintenance state coordination
 
-A Maintenance Activity entering `EXECUTE` changes its linked Asset to `MAINTENANCE`. `RESUME` or `ABORT` returns the Asset to `ACTIVE` only when no other Activity is executing for that Asset. A Ticket becoming `OPEN` or `CLOSED` alone does not change Asset state. IT Admin is the default actor for manual maintenance-state changes. The current assignee may change state only for an Asset linked to that assignee's currently assigned Ticket. Manual action cannot return an Asset to `ACTIVE` while any Activity is executing for it.
+A Maintenance Activity entering `EXECUTE` changes its linked Asset to `MAINTENANCE`. `RESUME` or `ABORT` returns the Asset to `ACTIVE` only when no other Activity is executing for that Asset. Maintenance requests the Asset transition with the caller actor and source Activity through the Asset & Topology contract; the Asset transition and Audit Fact are atomic, and repeating an already-applied target state is a no-op so the request can be retried. When an Asset state request fails, the Activity transition must remain retryable until both domains agree. A Ticket becoming `OPEN` or `CLOSED` alone does not change Asset state. IT Admin is the default actor for manual maintenance-state changes. The current assignee may change state only for an Asset linked to that assignee's currently assigned Ticket. Manual action cannot return an Asset to `ACTIVE` while any Activity is executing for it.
 
 ## 7. Functional requirement table
 
