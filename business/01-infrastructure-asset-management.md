@@ -59,27 +59,27 @@ The Telemetry Agent is not a participant in Flow 1. Its registration and lifecyc
 
 ## 5. Core terms
 
-| Term                | Meaning in Flow 1                                                                                          |
-| ------------------- | ---------------------------------------------------------------------------------------------------------- |
-| **Site**            | A top-level managed location in the PoC.                                                                   |
-| **Data Center**     | The default facility root provisioned through seed/bootstrap; read-only in Flow 1.                         |
-| **Room**            | A location within a Site.                                                                                  |
-| **Rack**            | A managed rack within a Room, with capacity and placement positions.                                       |
-| **Node**            | A managed compute asset. A laptop or PC may represent a Node in the PoC.                                   |
-| **Placement**       | The current confirmed relationship recorded through Asset Location between a Node and a Rack position.     |
-| **Rack QR**         | A unique identifier used to look up and verify a Rack. It is not the Node ID or Agent identity.            |
-| **Asset lifecycle** | One of `ACTIVE`, `MAINTENANCE`, or terminal `RETIRED`; separate from placement, Agent binding, and health. |
-| **Agent binding**   | The Agent–Node relationship owned by Agent Management.                                                     |
+| Term                | Meaning in Flow 1                                                                                                                                                            |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Site**            | A top-level managed location in the PoC.                                                                                                                                     |
+| **Data Center**     | The default facility root provisioned through seed/bootstrap; read-only in Flow 1.                                                                                           |
+| **Room**            | A location within a Site.                                                                                                                                                    |
+| **Rack**            | A managed rack within a Room, with capacity and placement positions.                                                                                                         |
+| **Node**            | A managed compute asset. A laptop or PC may represent a Node in the PoC.                                                                                                     |
+| **Placement**       | The current confirmed relationship recorded through Asset Location between a Node and a Rack position.                                                                       |
+| **QR mapping**      | A system-generated opaque value mapped to one Rack or Node. It is not the canonical target ID or Agent identity. Values remain unique across active and historical mappings. |
+| **Asset lifecycle** | One of `ACTIVE`, `MAINTENANCE`, or terminal `RETIRED`; separate from placement, Agent binding, and health.                                                                   |
+| **Agent binding**   | The Agent–Node relationship owned by Agent Management.                                                                                                                       |
 
 ## 6. Business rules
 
 ### BR-01 — Authorized management
 
-Only an authorized IT Admin may create or change Sites, Rooms, Racks, placement, Rack QR mapping, and Asset lifecycle. The default Data Center is provisioned through seed/bootstrap and can be retrieved, but not created or updated through Flow 1.
+Only an authorized IT Admin may create or change Sites, Rooms, Racks, placement, QR mappings, and Asset lifecycle. The default Data Center is provisioned through seed/bootstrap and can be retrieved, but not created or updated through Flow 1. QR mapping changes request a new system-generated value; Admins do not supply QR values.
 
 ### BR-02 — Location hierarchy
 
-The parent location must exist before a child location can be created. Sites belong to the seeded default Data Center, Rooms belong to Sites, and Racks belong to Rooms. The system must not accept a location assignment to a missing parent. Reject a Room size or grid update if it would invalidate any current Rack placement.
+The parent location must exist before a child location can be created. Sites belong to the seeded default Data Center, Rooms belong to Sites, and Racks belong to Rooms. The system must not accept a location assignment to a missing or retired parent. Reject a Room size or grid update if it would invalidate any current Rack placement or walkway cell. Grid cells are complete cells only; a remainder smaller than `grid_snap_mm` does not form a cell. An IT Admin may retire a Room only when no Rack is currently placed there; retirement preserves the Room record and map for history, removes it from the normal Room listing, and blocks edits and future Rack placements. Direct Room retrieval reports its `RETIRED` status.
 
 ### BR-03 — Stable asset identity
 
@@ -87,7 +87,7 @@ Each Node has an AR-IMMS identity that remains stable when its hostname, IP addr
 
 ### BR-04 — Rack capacity and placement
 
-A Node may be assigned only to an existing Rack with available capacity and a free, valid position. The system rejects a placement that exceeds Rack capacity or conflicts with an occupied position. In AT-02, each Rack occupies one logical Room-map cell addressed by integer column and row indices; rotation is retained as location metadata and does not change cell occupancy. Physical Rack width and depth are not modeled in AT-02. The exact physical footprint rules for multi-U equipment are not defined by this business flow.
+A Node may be assigned only to an existing Rack with available capacity and a free, valid position. The system rejects a placement that exceeds Rack capacity or conflicts with an occupied position. In AT-02, each Rack occupies one logical Room-map cell addressed by integer column and row indices; rotation is retained as location metadata and does not change cell occupancy. Physical Rack width and depth are not modeled in AT-02. The exact physical footprint rules for multi-U equipment are not defined by this business flow. An IT Admin may mark valid unoccupied grid cells as walkways; a Rack cannot be placed on a walkway. Room capacity is the number of complete grid cells minus walkway cells. The Room map returns walkways and Rack locations as separate data. Room reads return the server-managed layout revision in a strong quoted decimal `ETag`. Layout-changing requests send the unchanged ETag in `If-Match`; the server increments the revision and returns the updated ETag after a successful change. Cross-Room Rack moves send the destination ETag in `If-Match` and the source ETag in `If-Match-Source`. A stale ETag returns HTTP `412 Precondition Failed`.
 
 ### BR-05 — Unassigned Nodes are valid
 
@@ -97,13 +97,13 @@ A Node may exist without a Rack placement. Creating or unmapping a Node does not
 
 Assign, move, and unmap are separate asset-management operations. Moving a Node records the previous and new placement. Unmapping releases its Rack position and retains the Node record and its history.
 
-### BR-07 — Rack identification
+### BR-07 — QR identification
 
-Each Rack has at most one active QR mapping, and an active QR value identifies no more than one Rack. A Rack QR remains associated with the Rack when a Node is moved or unmapped.
+Each Rack or Node has at most one active QR mapping. The system generates opaque values for both target types; Node creation and its initial mapping are atomic. QR values are unique across active and inactive history and cannot be reassigned. Admins request generated values rather than supplying QR text. Resolution accepts active mappings only and returns current data from the existing Asset or Rack query; mapping history does not snapshot target details.
 
 ### BR-08 — QR and spatial tracking are distinct
 
-The QR is used to identify or look up a Rack. It does not by itself define 3D geometry, a persistent spatial anchor, or precise navigation. AR alignment behavior belongs to the AR client.
+The QR is used to identify or look up a Rack or Node. It does not by itself define 3D geometry, a persistent spatial anchor, or precise navigation. AR alignment behavior belongs to the AR client.
 
 ### BR-09 — Lifecycle is separate from placement and health
 
@@ -123,7 +123,7 @@ Monitoring, Incident, Maintenance, Inspection, and AR features reference the can
 
 ### BR-13 — Change history
 
-Material changes to locations, asset lifecycle, placement, or Rack QR mapping record actor, source, and timestamp through the existing Audit mechanism. The history must be sufficient to determine what changed and the current confirmed placement; do not create a separate Audit store.
+Material changes to locations, asset lifecycle, placement, or Rack/Node QR mapping record actor, source, and timestamp through the existing Audit mechanism. The history must be sufficient to determine what changed and the current confirmed placement; do not create a separate Audit store.
 
 ### BR-14 — Maintenance state coordination
 
@@ -131,22 +131,22 @@ A Maintenance Activity entering `EXECUTE` changes its linked Asset to `MAINTENAN
 
 ## 7. Functional requirement table
 
-| ID            | Business requirement                                                                                                               | Acceptance criteria                                                                                                                                                                                                                             |
-| ------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **F1-REQ-01** | Asset and location management must be restricted to an authorized IT Admin.                                                        | An unauthorized user cannot create or change locations, placements, Rack QR mappings, or asset lifecycle.                                                                                                                                       |
-| **F1-REQ-02** | The system must maintain the location hierarchy **seeded Data Center → Site → Room → Rack**.                                       | The default Data Center is retrievable but read-only through Flow 1; a Room cannot be created without an existing Site; a Rack cannot be created without an existing Room. Room size/grid changes that invalidate Rack placements are rejected. |
-| **F1-REQ-03** | Each managed Node must have a stable AR-IMMS identity.                                                                             | Changing a Node’s hostname, IP address, Rack placement, QR mapping, or Agent binding does not change its AR-IMMS identity.                                                                                                                      |
-| **F1-REQ-04** | A Node may exist without being assigned to a Rack.                                                                                 | A newly created or unmapped Node remains available in the registry as unassigned; it is not deleted or retired.                                                                                                                                 |
-| **F1-REQ-05** | The system must represent Rack capacity and valid placement positions, including the required Column/Position and U position.      | A Rack occupies one logical Room-map cell addressed by integer column and row indices in AT-02; a Node placement that exceeds Rack capacity or conflicts with an occupied U position is rejected. The original placement remains unchanged when a move is rejected.         |
-| **F1-REQ-06** | Assigning, moving, and unmapping a Node must be separate operations.                                                               | Assign and move establish a valid Rack placement; unmap releases the position while retaining the Node record, identity, and history.                                                                                                           |
-| **F1-REQ-07** | Each Rack must have a unique QR identifier for lookup and field verification.                                                      | An active QR identifies only one Rack. Scanning or looking up the QR resolves to that Rack. Changing a QR does not change the Rack ID.                                                                                                          |
-| **F1-REQ-08** | IT Admin must be able to generate individual or bulk printable Rack QR labels in both PDF and SVG.                                 | Each generated label contains the Rack QR and readable Rack identity/location information and can be physically applied and scanned.                                                                                                            |
-| **F1-REQ-09** | Asset lifecycle is `ACTIVE`, `MAINTENANCE`, or terminal `RETIRED`, separate from placement, Agent binding, and operational health. | New Assets start `ACTIVE` and unassigned. Placement is recorded through Asset Location; Agent binding belongs to Agent Management. `ACTIVE` does not imply placement, Agent binding, or healthy operation.                                      |
-| **F1-REQ-10** | An Asset or Rack may be retired only when its retirement preconditions are met.                                                    | Retire an Asset only from `ACTIVE`, after maintenance ends, it is unmapped, and Agent binding is removed. `RETIRED` cannot be reversed. A Rack with placed Nodes cannot be retired. Preserve history.                                           |
-| **F1-REQ-11** | Material changes to locations, lifecycle, placement, and Rack QR mapping must be traceable.                                        | The existing Audit mechanism records actor, source, and timestamp; no separate Audit store is introduced.                                                                                                                                       |
-| **F1-REQ-12** | Other AR-IMMS flows must reference assets using the canonical Asset ID.                                                            | Other domains can retrieve confirmed asset identity and physical placement; they do not directly modify Asset & Topology records.                                                                                                               |
-| **F1-REQ-13** | Asset and placement data must support the AR Digital Twin view.                                                                    | The view can represent Site/Room/Rack/Node placement and use the Rack QR to verify a physical Rack. Asset & Topology does not own 3D geometry, camera tracking, or spatial anchors.                                                             |
-| **F1-REQ-14** | Flow 1 must remain limited to confirmed asset-management needs.                                                                    | Workload/Service registry, telemetry, monitoring health, Incident lifecycle, Maintenance Activity workflows, and extended DCIM capabilities remain outside Flow 1. Asset maintenance-state coordination follows BR-14.                          |
+| ID            | Business requirement                                                                                                               | Acceptance criteria                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **F1-REQ-01** | Asset and location management must be restricted to an authorized IT Admin.                                                        | An unauthorized user cannot create or change locations, placements, Rack QR mappings, or asset lifecycle.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| **F1-REQ-02** | The system must maintain the location hierarchy **seeded Data Center → Site → Room → Rack**.                                       | The default Data Center is retrievable but read-only through Flow 1; a Room cannot be created without an existing Site; a Rack cannot be created without an existing active Room. Room map supports reserved walkway cells, rejects Rack placement on walkways, and reports capacity excluding walkways. Stale layout revisions conflict; Room size/grid changes that invalidate Rack or walkway cells are rejected. An IT Admin may retire a Room only when no Rack is currently placed there; retired Rooms are preserved for history, omitted from normal lists, and cannot be edited or receive Rack placements. |
+| **F1-REQ-03** | Each managed Node must have a stable AR-IMMS identity.                                                                             | Changing a Node’s hostname, IP address, Rack placement, QR mapping, or Agent binding does not change its AR-IMMS identity.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| **F1-REQ-04** | A Node may exist without being assigned to a Rack.                                                                                 | A newly created or unmapped Node remains available in the registry as unassigned; it is not deleted or retired.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| **F1-REQ-05** | The system must represent Rack capacity and valid placement positions, including the required Column/Position and U position.      | A Rack occupies one logical Room-map cell addressed by integer column and row indices in AT-02; a Node placement that exceeds Rack capacity or conflicts with an occupied U position is rejected. The original placement remains unchanged when a move is rejected.                                                                                                                                                                                                                                                                                                                                                  |
+| **F1-REQ-06** | Assigning, moving, and unmapping a Node must be separate operations.                                                               | Assign and move establish a valid Rack placement; unmap releases the position while retaining the Node record, identity, and history.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| **F1-REQ-07** | Racks and Nodes use system-generated QR mappings for lookup and field verification.                                                | QR values are globally unique across active and inactive history; each target has at most one active mapping. Node creation and its initial mapping are atomic. Resolution returns current target data through its Asset or Rack query; it does not return a frozen snapshot.                                                                                                                                                                                                                                                                                                                                        |
+| **F1-REQ-08** | IT Admin must be able to generate individual or bulk printable Rack and Node QR labels in both PDF and SVG.                        | Each label contains the target's QR and readable identity/location information and can be physically applied and scanned.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| **F1-REQ-09** | Asset lifecycle is `ACTIVE`, `MAINTENANCE`, or terminal `RETIRED`, separate from placement, Agent binding, and operational health. | New Assets start `ACTIVE` and unassigned. Placement is recorded through Asset Location; Agent binding belongs to Agent Management. `ACTIVE` does not imply placement, Agent binding, or healthy operation.                                                                                                                                                                                                                                                                                                                                                                                                           |
+| **F1-REQ-10** | An Asset or Rack may be retired only when its retirement preconditions are met.                                                    | Retire an Asset only from `ACTIVE`, after maintenance ends, it is unmapped, and Agent binding is removed. `RETIRED` cannot be reversed. A Rack with placed Nodes cannot be retired. Preserve history.                                                                                                                                                                                                                                                                                                                                                                                                                |
+| **F1-REQ-11** | Material changes to locations, lifecycle, placement, and Rack/Node QR mappings must be traceable.                                  | The existing Audit mechanism records actor, source, and timestamp; no separate Audit store is introduced.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| **F1-REQ-12** | Other AR-IMMS flows must reference assets using the canonical Asset ID.                                                            | Other domains can retrieve confirmed asset identity and physical placement; they do not directly modify Asset & Topology records.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| **F1-REQ-13** | Asset and placement data must support the AR Digital Twin view.                                                                    | The view can represent Site/Room/Rack/Node placement and use Rack/Node QR mappings to resolve current target data. Asset & Topology does not own 3D geometry, camera tracking, or spatial anchors.                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| **F1-REQ-14** | Flow 1 must remain limited to confirmed asset-management needs.                                                                    | Workload/Service registry, telemetry, monitoring health, Incident lifecycle, Maintenance Activity workflows, and extended DCIM capabilities remain outside Flow 1. Asset maintenance-state coordination follows BR-14.                                                                                                                                                                                                                                                                                                                                                                                               |
 
 > **Review note**: **F1-REQ-08** limits label content to Rack identity/location; fields such as IP address are not included in this baseline. Multi-U equipment footprint rules remain deferred.
 
@@ -154,13 +154,13 @@ A Maintenance Activity entering `EXECUTE` changes its linked Asset to `MAINTENAN
 
 1. Seed/bootstrap provisions the default Data Center; the IT Admin retrieves it.
 2. The IT Admin creates a Site under the default Data Center if it does not already exist.
-3. The IT Admin creates a Room under that Site.
-4. The IT Admin creates a Rack under that Room, records its capacity, and selects its initial one-cell map location by integer column and row indices. Rack rotation is retained as location metadata; Node Column/Position and U placement labels remain separate from Room-map coordinates.
+3. The IT Admin creates a Room under that Site and may mark valid, unoccupied grid cells as walkways.
+4. The IT Admin creates a Rack under that Room, records its capacity, and selects its initial one-cell map location by integer column and row indices. Rack rotation is retained as location metadata; Node Column/Position and U placement labels remain separate from Room-map coordinates. The Room map shows walkways and Rack locations separately and reports the remaining cell capacity.
 5. The IT Admin creates a Node record. AR-IMMS assigns its stable identity; the Asset starts `ACTIVE` and unassigned.
 6. The IT Admin selects the Node, Rack, and target position.
 7. AR-IMMS validates that the Node and Rack are eligible, the Rack has capacity, and the position is free.
 8. If validation succeeds, AR-IMMS records the placement as an Asset Location and retains its history. The Node is now available as a physical asset reference to other flows.
-9. The IT Admin may assign a unique QR to the Rack and generate a single or bulk label for printing. A Technician may physically apply and scan the label to verify the Rack.
+9. Node creation generates its initial QR mapping atomically. The IT Admin may request a newly generated QR mapping for a Rack or replace/deactivate a Rack or Node mapping. The Admin can generate a single or bulk label for printing. A Technician may physically apply and scan the label to resolve the target's current details.
 10. If Agent collection is required, the authorized user continues with Flow 2. Flow 1 does not perform Agent enrollment.
 
 ## 9. Alternative and lifecycle flows
@@ -182,7 +182,7 @@ If the requested Rack U is already the Node's current position, the move is a no
 
 1. The IT Admin requests that a Node be removed from its Rack position.
 2. AR-IMMS releases the position and records the unmapping.
-3. The Node remains in the registry as unassigned. Its identity, history, and Rack QR records are retained. Agent unlink and retirement are separate operations.
+3. The Node remains in the registry as unassigned. Its identity, history, and QR mapping records are retained. Agent unlink and retirement are separate operations.
 
 An `ACTIVE` or `MAINTENANCE` Node may be unmapped. Unmapping does not end a Maintenance Activity, change lifecycle state, or unlink an Agent. A `RETIRED` Node cannot be unmapped because retirement requires it to be unassigned.
 
@@ -193,26 +193,38 @@ An `ACTIVE` or `MAINTENANCE` Node may be unmapped. Unmapping does not end a Main
 3. For an Asset, retirement is allowed only from `ACTIVE`, after maintenance has ended, the Asset is unmapped, and Agent Management confirms its binding has been removed.
 4. If the preconditions pass, AR-IMMS marks the Asset `RETIRED` permanently and preserves its history and references. Otherwise, the request is rejected with the unmet precondition.
 
-### 9.4 Manage a Rack QR
+### 9.4 Manage QR mappings
 
-The IT Admin may create, replace, or deactivate a Rack QR independently of Node placement. A QR lookup returns the Rack it identifies. A QR change does not change the Rack ID or any Node ID.
+The IT Admin may request a generated QR mapping for a Rack or Node, replace its active mapping with a new generated value, or deactivate it. A QR lookup resolves only active mappings and reads the target's current data through its existing Asset or Rack query. Mapping history retains prior values and target references without storing snapshots. A QR change does not change a Rack ID or Node ID. An inactive or historical QR value cannot be reassigned.
+
+### 9.5 Retire a Room
+
+1. The IT Admin requests Room retirement.
+2. AR-IMMS checks that no Rack is currently placed in the Room and atomically marks the Room `RETIRED` with an Audit Fact.
+3. If a Rack is still placed there or a concurrent layout change wins, AR-IMMS rejects the request and leaves the Room active.
+4. A retired Room is omitted from normal Room listings, remains directly readable with its map and status for history, and cannot be edited or receive Rack placements. Repeating retirement is a no-op.
 
 ## 10. Failure and exception handling
 
-| Condition                                                         | Expected behavior                                                                                     |
-| ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| Parent Site or Room does not exist                                | Reject child location creation.                                                                       |
-| Rack does not exist or is not eligible                            | Reject Node placement.                                                                                |
-| Rack capacity is exceeded or target position is occupied          | Reject placement/move; preserve the prior placement.                                                  |
-| QR is already active on another Rack                              | Reject the duplicate mapping.                                                                         |
-| Rack still contains placed Nodes                                  | Reject Rack retirement.                                                                               |
-| Asset is in maintenance, is placed, or still has an Agent binding | Reject Asset retirement until maintenance ends, it is unmapped, and Agent Management confirms unlink. |
-| Room size/grid update would invalidate a Rack placement           | Reject the proposed Room update and preserve the existing Room and Rack layout.                       |
-| IT Admin unmaps a Node                                            | Release the position only; do not delete, retire, or unlink the Node.                                 |
+| Condition                                                                     | Expected behavior                                                                                     |
+| ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Parent Site or Room does not exist                                            | Reject child location creation.                                                                       |
+| Rack does not exist or is not eligible                                        | Reject Node placement.                                                                                |
+| Rack capacity is exceeded or target position is occupied                      | Reject placement/move; preserve the prior placement.                                                  |
+| QR value already exists in active or inactive history                         | Reject the duplicate value; historical QR values cannot be reused.                                    |
+| Rack still contains placed Nodes                                              | Reject Rack retirement.                                                                               |
+| Asset is in maintenance, is placed, or still has an Agent binding             | Reject Asset retirement until maintenance ends, it is unmapped, and Agent Management confirms unlink. |
+| Room size/grid update would invalidate a Rack placement                       | Reject the proposed Room update and preserve the existing Room and Rack layout.                       |
+| Walkway cell is outside the full-cell grid, duplicated, or occupied by a Rack | Reject the complete walkway update; preserve the Room map.                                            |
+| Rack target cell is outside the grid, occupied, or marked as walkway          | Reject the Rack create/move; preserve existing Rack locations and history.                            |
+| Room layout revision is stale                                                 | Return a conflict and require the client to reload the Room map before retrying.                      |
+| Room retirement is requested while a Rack is placed there                     | Return a conflict; keep the Room active and preserve all Room and Rack data.                          |
+| Edit or Rack placement targets a retired Room                                 | Return a conflict; preserve its retired status and history.                                           |
+| IT Admin unmaps a Node                                                        | Release the position only; do not delete, retire, or unlink the Node.                                 |
 
 ## 11. Resulting system responsibilities
 
-- **Asset & Topology** is the source of truth for Site/Room/Rack/Node identity, confirmed physical placement, Rack QR mapping, and asset lifecycle.
+- **Asset & Topology** is the source of truth for Site/Room/Rack/Node identity, confirmed physical placement, Rack/Node QR mappings, and asset lifecycle.
 - **Agent Management** is the source of truth for Agent identity and Agent–Node binding. A Flow-level application coordinator uses the Asset & Topology and Agent Management public contracts for cross-domain operations: a Node must be `ACTIVE` and placed before binding, and retirement requires a confirmed unbound result from Agent Management. The coordinator fails closed if binding status is unavailable and does not replace either domain as the source of truth. AT-10 must define and verify protection against concurrent bind and retirement operations.
 - **Monitoring/Observability** is the source of truth for telemetry and observed runtime/service behavior.
 - **Maintenance** owns Maintenance Activities and requests Asset state changes through an agreed public contract; **Ticket Management** owns assignment and provides the current-assignee check for manual maintenance authorization.
@@ -229,5 +241,5 @@ These details are intentionally not invented by Flow 1 and should be decided onl
 - Exact asset metadata fields beyond the identity, hierarchy, capacity, and placement information required by the flow.
 - The physical footprint rules for Nodes that occupy multiple U positions.
 - Whether any additional asset classes are needed.
-- Label fields beyond the Rack QR and the readable Rack identity/location needed for field verification.
+- Label fields beyond the Rack/Node QR and the readable target identity/location needed for field verification.
 - Any additional topology such as power, network, cooling, cloud, or Workload/Service relationships.
