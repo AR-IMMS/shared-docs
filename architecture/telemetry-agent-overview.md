@@ -4,7 +4,7 @@
 
 ## Purpose and boundary
 
-The Telemetry Agent is installed on a Windows or Linux host or VM. It manages local configuration and dependency lifecycle, supervises an OpenTelemetry Collector process, and provides telemetry to the OTLP Gateway. The Collector remains the telemetry engine: it scrapes configured sources, processes signals, and exports them. Core owns fleet-level desired configuration after an installation is enrolled; the Agent owns local state and runtime application.
+The Telemetry Agent is installed on a Windows or Linux host or VM. It manages local configuration and dependency lifecycle, supervises an OpenTelemetry Collector process, and provides telemetry to the OTLP Gateway. The Collector remains the telemetry engine: it scrapes configured sources, processes signals, and exports them. Core becomes authoritative for a setting only after the Agent accepts and durably stores an authenticated Core snapshot for that setting; the Agent owns local state and runtime application.
 
 ## Runtime flow
 
