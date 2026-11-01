@@ -1,0 +1,351 @@
+openapi: 3.1.0
+info:
+  title: AR-IMMS Agent Enrollment API
+  version: 0.1.0
+  description: |
+    Contract-first baseline for Flow 2 / Agent Enrollment (increments I1-I3).
+    This specification defines bootstrap-token issuance and Agent enrollment only.
+    It does not define Control Plane, credential renewal, revocation or uninstall APIs.
+
+    Stability: Request and initial success response shapes are baseline v1.
+    The exact lost-response credential recovery security mechanism is NOT finalized;
+    consumers must not assume a 200 response can always replay an access token.
+servers:
+  - url: https://core.example.com
+    description: Example deployment; configure a trusted Core origin in production
+tags:
+  - name: Bootstrap
+    description: Admin-facing enrollment preparation
+  - name: Enrollment
+    description: Agent-facing initial registration
+paths:
+  /api/v1/nodes/{nodeId}/agent-bootstrap-tokens:
+    post:
+      tags: [Bootstrap]
+      operationId: issueAgentBootstrapToken
+      summary: Issue a Node-bound single-use bootstrap token
+      description: |
+        Requires an authenticated, authorized human administrator.
+        The Node must exist, be eligible for Agent registration and have no active binding.
+        Token lifetime is 600 seconds. Core stores only a verifier/hash and displays
+        the plaintext bootstrap token once in this response. A new issuance invalidates
+        any earlier unconsumed token for the same Node (proposed baseline).
+      security:
+        - humanBearer: []
+      parameters:
+        - name: nodeId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Existing Asset & Topology Node ID
+      responses:
+        '201':
+          description: Bootstrap token created
+          headers:
+            Cache-Control:
+              schema: { type: string }
+              description: Should be no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BootstrapTokenResponse'
+              example:
+                data:
+                  token_id: bt_01JEXAMPLE
+                  bootstrap_token: arimms_bt_example-secret
+                  node_id: a3cb4e2c-15c1-4c3d-8cc9-110a47ac7001
+                  expires_at: '2026-10-30T10:10:00Z'
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '429': { $ref: '#/components/responses/Problem' }
+  /api/v1/agent-enrollments:
+    post:
+      tags: [Enrollment]
+      operationId: enrollAgent
+      summary: Enroll an Agent installation and bind it to a Node
+      description: |
+        HTTPS-only endpoint. The bootstrap token is the enrollment secret; no Agent
+        bearer token is required for the initial request. Core resolves the Node
+        from the bootstrap token, never from Agent-supplied metadata.
+
+        The installation ID persists across restart and upgrade. Generate and durably
+        persist the enrollment_attempt_id and immutable request before the first send.
+        Retries of the same operation must reuse the same request and attempt ID.
+        Token validation, consumption, binding uniqueness, credential issuance and
+        attempt recording are coordinated atomically using MongoDB transactions.
+
+        201 indicates a newly committed enrollment. 200 is reserved for recovery of a
+        previously committed matching attempt. Secure replay/re-issuance of the
+        credential on 200 is a design dependency, NOT yet guaranteed by this contract.
+        Enrollment success does not mean Collector activation or telemetry health.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnrollmentRequest'
+            example:
+              bootstrap_token: arimms_bt_example-secret
+              enrollment_attempt_id: d99c38f2-7668-4814-9e70-6416014f83fe
+              installation:
+                id: 5baf0cba-cf5a-4d39-a3d4-e76263b70810
+              agent:
+                version: 0.1.4
+              environment:
+                os: linux
+                architecture: amd64
+                hostname: node-01
+              metadata:
+                deployment_kind: vm
+                hypervisor: kvm
+                custom_label: development
+      responses:
+        '201':
+          description: Newly committed enrollment
+          headers:
+            Cache-Control:
+              schema: { type: string }
+              description: Should be no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnrollmentResponse'
+              example:
+                data:
+                  enrollment_id: e4fdf407-96b1-4ff1-b659-c9cf4470b5f9
+                  installation_id: 5baf0cba-cf5a-4d39-a3d4-e76263b70810
+                  binding:
+                    id: e9a95012-1c46-4e85-97a0-a6b909b5c935
+                    node_id: a3cb4e2c-15c1-4c3d-8cc9-110a47ac7001
+                    status: active
+                  credential:
+                    type: bearer
+                    access_token: '<secret>'
+                  control_plane:
+                    base_url: https://core.example.com/api/v1/agent-control
+                    poll_interval_seconds: 30
+                meta:
+                  request_id: req_01JEXAMPLE
+        '200':
+          description: |
+            Existing committed attempt recognized. Credential recovery behavior is
+            pending a security decision; do not assume this always contains the
+            original credential until the recovery design is frozen.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnrollmentRecoveryResponse'
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '429': { $ref: '#/components/responses/RateLimitedProblem' }
+        '503': { $ref: '#/components/responses/Problem' }
+components:
+  securitySchemes:
+    humanBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Human IAM authentication; actual browser-cookie transport may also be supported by Core.
+  schemas:
+    BootstrapTokenResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [token_id, bootstrap_token, node_id, expires_at]
+          properties:
+            token_id: { type: string }
+            bootstrap_token:
+              {
+                type: string,
+                writeOnly: false,
+                description: Secret; shown exactly once,
+              }
+            node_id: { type: string, format: uuid }
+            expires_at: { type: string, format: date-time }
+    EnrollmentRequest:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          bootstrap_token,
+          enrollment_attempt_id,
+          installation,
+          agent,
+          environment,
+        ]
+      properties:
+        bootstrap_token:
+          type: string
+          minLength: 1
+          description: Node-bound, single-use secret, 10-minute validity
+        enrollment_attempt_id:
+          type: string
+          format: uuid
+          description: Same UUID and immutable payload for all retries of one attempt
+        installation:
+          $ref: '#/components/schemas/InstallationIdentity'
+        agent:
+          $ref: '#/components/schemas/AgentSoftware'
+        environment:
+          $ref: '#/components/schemas/AgentEnvironment'
+        metadata:
+          type: object
+          description: |
+            Optional JSON object for non-secret, untrusted extension metadata.
+            Maximum serialized UTF-8 JSON size: 4096 bytes (enforced by server).
+            Unrecognized keys must not grant permissions or alter enrollment policy.
+          additionalProperties: true
+          default: {}
+    InstallationIdentity:
+      type: object
+      additionalProperties: false
+      required: [id]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Stable installation UUID, not an authentication secret
+    AgentSoftware:
+      type: object
+      additionalProperties: false
+      required: [version]
+      properties:
+        version: { type: string, minLength: 1, maxLength: 64 }
+    AgentEnvironment:
+      type: object
+      additionalProperties: false
+      required: [os, architecture]
+      properties:
+        os:
+          type: string
+          enum: [linux, windows, darwin, other]
+        architecture:
+          type: string
+          enum: [amd64, arm64, '386', other]
+        hostname:
+          type: string
+          minLength: 1
+          maxLength: 255
+    EnrollmentResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          $ref: '#/components/schemas/EnrollmentResult'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    EnrollmentRecoveryResponse:
+      type: object
+      description: |
+        Provisional recovery envelope; final credential recovery response is
+        intentionally left open until the security mechanism is approved.
+      additionalProperties: true
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: true
+          description: Existing enrollment result, with credential recovery semantics pending
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    EnrollmentResult:
+      type: object
+      additionalProperties: false
+      required:
+        [enrollment_id, installation_id, binding, credential, control_plane]
+      properties:
+        enrollment_id: { type: string, format: uuid }
+        installation_id: { type: string, format: uuid }
+        binding:
+          type: object
+          additionalProperties: false
+          required: [id, node_id, status]
+          properties:
+            id: { type: string, format: uuid }
+            node_id: { type: string, format: uuid }
+            status: { type: string, enum: [active] }
+        credential:
+          type: object
+          additionalProperties: false
+          required: [type, access_token]
+          properties:
+            type: { type: string, enum: [bearer] }
+            access_token:
+              type: string
+              minLength: 1
+              description: Opaque bearer secret for Core Agent-facing APIs only
+        control_plane:
+          type: object
+          additionalProperties: false
+          required: [base_url, poll_interval_seconds]
+          properties:
+            base_url: { type: string, format: uri, pattern: '^https://' }
+            poll_interval_seconds: { type: integer, minimum: 1 }
+    ResponseMeta:
+      type: object
+      additionalProperties: true
+      required: [request_id]
+      properties:
+        request_id: { type: string }
+    ProblemDetails:
+      type: object
+      description: Core Problem Details (RFC 9457) with a stable application error code
+      required: [type, title, status, code]
+      properties:
+        type: { type: string, format: uri-reference }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        instance: { type: string }
+        code:
+          type: string
+          enum:
+            - INVALID_ENROLLMENT_PAYLOAD
+            - INVALID_BOOTSTRAP_TOKEN
+            - BOOTSTRAP_TOKEN_EXPIRED
+            - BOOTSTRAP_TOKEN_CONSUMED
+            - NODE_ALREADY_BOUND
+            - INSTALLATION_ALREADY_BOUND
+            - ENROLLMENT_ATTEMPT_CONFLICT
+            - RATE_LIMIT_EXCEEDED
+            - ENROLLMENT_UNAVAILABLE
+            - NODE_NOT_ELIGIBLE
+            - FORBIDDEN
+            - NOT_FOUND
+        request_id: { type: string }
+  responses:
+    Problem:
+      description: Failure described by the response status and application code
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+          example:
+            type: https://docs.ar-imms.dev/problems/bootstrap-token-expired
+            title: Bootstrap token expired
+            status: 401
+            code: BOOTSTRAP_TOKEN_EXPIRED
+            detail: The enrollment token has expired.
+            request_id: req_01JEXAMPLE
+    RateLimitedProblem:
+      description: Too many requests
+      headers:
+        Retry-After:
+          schema: { type: string }
+          description: Number of seconds or HTTP-date
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
