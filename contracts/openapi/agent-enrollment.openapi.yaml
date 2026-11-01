@@ -7,9 +7,9 @@ info:
     This specification defines bootstrap-token issuance and Agent enrollment only.
     It does not define Control Plane, credential renewal, revocation or uninstall APIs.
 
-    Stability: Request and initial success response shapes are baseline v1.
-    The exact lost-response credential recovery security mechanism is NOT finalized;
-    consumers must not assume a 200 response can always replay an access token.
+    The request and success response shapes are stable v1. A matching retry within
+    24 hours returns the committed result and credential after Core verifies the
+    original bootstrap token and immutable request fingerprint.
 servers:
   - url: https://core.example.com
     description: Example deployment; configure a trusted Core origin in production
@@ -79,9 +79,14 @@ paths:
         Token validation, consumption, binding uniqueness, credential issuance and
         attempt recording are coordinated atomically using MongoDB transactions.
 
-        201 indicates a newly committed enrollment. 200 is reserved for recovery of a
-        previously committed matching attempt. Secure replay/re-issuance of the
-        credential on 200 is a design dependency, NOT yet guaranteed by this contract.
+        201 indicates a newly committed enrollment. If the response was lost, the
+        same attempt ID, bootstrap token and immutable request recover the original
+        committed result for 24 hours. Core stores the recovery result only as
+        authenticated ciphertext. The request fingerprint is deterministic over
+        canonical enrollment fields and the bootstrap-token hash. The attempt ID
+        alone never authorizes recovery.
+        After the recovery window, Core returns 410 while retaining the binding and
+        credential hash; it does not create another enrollment.
         Enrollment success does not mean Collector activation or telemetry health.
       security: []
       requestBody:
@@ -133,17 +138,15 @@ paths:
                 meta:
                   request_id: req_01JEXAMPLE
         '200':
-          description: |
-            Existing committed attempt recognized. Credential recovery behavior is
-            pending a security decision; do not assume this always contains the
-            original credential until the recovery design is frozen.
+          description: Original committed enrollment result recovered after a matching retry
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/EnrollmentRecoveryResponse'
+                $ref: '#/components/schemas/EnrollmentResponse'
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
+        '410': { $ref: '#/components/responses/Problem' }
         '429': { $ref: '#/components/responses/RateLimitedProblem' }
         '503': { $ref: '#/components/responses/Problem' }
 components:
@@ -246,20 +249,6 @@ components:
           $ref: '#/components/schemas/EnrollmentResult'
         meta:
           $ref: '#/components/schemas/ResponseMeta'
-    EnrollmentRecoveryResponse:
-      type: object
-      description: |
-        Provisional recovery envelope; final credential recovery response is
-        intentionally left open until the security mechanism is approved.
-      additionalProperties: true
-      required: [data]
-      properties:
-        data:
-          type: object
-          additionalProperties: true
-          description: Existing enrollment result, with credential recovery semantics pending
-        meta:
-          $ref: '#/components/schemas/ResponseMeta'
     EnrollmentResult:
       type: object
       additionalProperties: false
@@ -319,6 +308,7 @@ components:
             - NODE_ALREADY_BOUND
             - INSTALLATION_ALREADY_BOUND
             - ENROLLMENT_ATTEMPT_CONFLICT
+            - ENROLLMENT_RECOVERY_EXPIRED
             - RATE_LIMIT_EXCEEDED
             - ENROLLMENT_UNAVAILABLE
             - NODE_NOT_ELIGIBLE

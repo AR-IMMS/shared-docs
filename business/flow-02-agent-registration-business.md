@@ -60,8 +60,14 @@ sequenceDiagram
     Agent->>Core: POST /api/v1/agent-enrollments
     Core->>DB: Validate, consume token and create binding atomically
     DB-->>Core: Enrollment committed
-    Core-->>Agent: 201 Binding + credential + Core control URL
-    Agent->>Local: Securely persist credential and binding
+    alt Response received
+        Core-->>Agent: 201 Binding + credential + Core control URL
+        Agent->>Local: Securely persist credential and binding
+    else Response lost
+        Agent->>Core: Retry same attempt ID, token and immutable request
+        Core-->>Agent: 200 Original result and credential within 24 hours
+        Agent->>Local: Securely persist credential and binding
+    end
     Note over Agent,Core: Registered; Collector activation happens later
 ```
 
@@ -102,7 +108,7 @@ sequenceDiagram
 | EX-02 | Bootstrap token invalid, expired or previously consumed for another operation | Reject enrollment; no new binding; Technician requests a new token as appropriate.                                                        |
 | EX-03 | Two installations try to bind to the same Node                                | At most one succeeds; the other receives conflict.                                                                                        |
 | EX-04 | One installation tries to hold multiple active Node bindings                  | Reject the conflicting enrollment.                                                                                                        |
-| EX-05 | Network times out after Core commits enrollment                               | Agent retries the **same attempt ID and unchanged request**, not a fresh enrollment; secure result recovery is an open protocol decision. |
+| EX-05 | Network times out after Core commits enrollment                               | Agent retries the **same attempt ID, bootstrap token and unchanged request**. Core returns the original result for 24 hours; after that it returns `410 ENROLLMENT_RECOVERY_EXPIRED` without creating another binding. |
 | EX-06 | Core temporary outage / rate limit                                            | Agent retries the same operation using bounded backoff; no duplicate binding or automatic Collector disruption.                           |
 | EX-07 | Local credential persistence fails                                            | Agent retains recoverable attempt state; do not claim registration has completed locally.                                                 |
 | EX-08 | Agent metadata is incomplete                                                  | Required schema fields are validated; optional data may be omitted; metadata does not determine authorization.                            |
@@ -146,6 +152,7 @@ sequenceDiagram
 - **AC-03:** Expired, invalid or consumed token cannot establish another binding, even before database TTL cleanup runs.
 - **AC-04:** Concurrent enrollment cannot create multiple active bindings for either Node or installation.
 - **AC-05:** Retried requests preserve installation ID and attempt ID; duplicate committed requests are recognized without duplicating business records.
+- **AC-05a:** A matching retry proves possession of the original bootstrap token and recovers the same credential for 24 hours; the attempt ID alone never authorizes recovery.
 - **AC-06:** Agent credential is stored securely and never logged or persisted as plaintext operational state.
 - **AC-07:** Enrollment success does not automatically mark the Collector operational or telemetry healthy.
 - **AC-08:** Authorized unlink revokes permission while preserving the Node's placement and binding history (later increment).
@@ -157,7 +164,7 @@ sequenceDiagram
 | Reissue policy when an unconsumed bootstrap token exists              | **Proposed:** new issuance invalidates previous token; confirm before I1 merge. |
 | Exact Node eligibility check (location/retirement and other policies) | **Confirm with Asset & Topology** before I1.                                    |
 | Credential expiration, renewal and rotation                           | **Open**; do not infer from enrollment response.                                |
-| Lost-response credential recovery/security                            | **Open; blocking end-to-end recovery guarantee**.                               |
+| Lost-response credential recovery/security                            | **Approved:** AES-256-GCM encrypted result escrow for 24 hours; recovery requires the same attempt ID, original bootstrap token and immutable request fingerprint. |
 | Unlink, uninstall-report and Control Plane API shapes                 | **Outside current OpenAPI**; design in later increments.                        |
 | Administrator/Technician notification on registration failure         | **Deferred**; logging/audit first, do not promise proactive notification.       |
 
