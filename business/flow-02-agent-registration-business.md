@@ -115,13 +115,13 @@ sequenceDiagram
 
 ## 5. Lifecycle follow-on scenarios
 
-### 5.1 Unlink / revoke (subsequent increment)
+### 5.1 Unlink / revoke (I4)
 
-1. Admin requests unlink of the active binding.
-2. Core revokes the association and all credentials authorized by that binding, retaining audit/history.
+1. Admin with `agent:manage` requests `POST /api/v1/agent-bindings/{bindingId}/revoke`.
+2. Core revokes the association and its active credentials atomically, records one audit fact, and retains installation and binding history. First and repeated calls return `204 No Content`.
 3. Agent may be offline. It learns about revocation on a later authenticated interaction or another defined mechanism; **immediate local shutdown is not guaranteed**.
 4. An unlinked Node retains its Asset & Topology placement; unlink is **not** asset `unassigned` or `retired`.
-5. Re-enrollment is a new authorized operation and must not silently resurrect the revoked binding.
+5. Re-enrollment is a new authorized operation with a new bootstrap token and attempt ID. It may reuse the stable installation ID, updates Agent version/environment/metadata, and creates a new binding without restoring the revoked binding.
 
 ### 5.2 Uninstall (subsequent increment)
 
@@ -138,7 +138,7 @@ sequenceDiagram
 | BR-02 | Only an authorized Admin may issue a Node-bound bootstrap token.                                           |
 | BR-03 | Bootstrap token is high entropy, single-use, valid for 10 minutes and never exposed again after issuance.  |
 | BR-04 | One Node and one installation each have at most one **active** binding.                                    |
-| BR-05 | `installation.id` persists across restarts/upgrades and is not, by itself, proof of authorization.         |
+| BR-05 | `installation.id` persists across restarts/upgrades and re-enrollment; it is not, by itself, proof of authorization. |
 | BR-06 | Enrollment attempt ID is stable across retries of the same operation.                                      |
 | BR-07 | Node identity in enrollment is resolved from token; host/VM metadata is informational.                     |
 | BR-08 | Credential authorization is subject to an active registration binding; revoked registrations are rejected. |
@@ -155,7 +155,11 @@ sequenceDiagram
 - **AC-05a:** A matching retry proves possession of the original bootstrap token and recovers the same credential for 24 hours; the attempt ID alone never authorizes recovery.
 - **AC-06:** Agent credential is stored securely and never logged or persisted as plaintext operational state.
 - **AC-07:** Enrollment success does not automatically mark the Collector operational or telemetry healthy.
-- **AC-08:** Authorized unlink revokes permission while preserving the Node's placement and binding history (later increment).
+- **AC-08:** Authorized unlink revokes permission while preserving the Node's placement and binding history.
+- **AC-09:** Core accepts a credential only while both credential and binding are active; Agent credentials never authorize Human/Admin APIs.
+- **AC-10:** Revoking a binding invalidates its active credentials, preserves history, and appends one audit fact; repeated revocation returns 204 without another fact.
+- **AC-11:** Matching I3 recovery after revocation returns `410 ENROLLMENT_RECOVERY_REVOKED` and never reveals the credential.
+- **AC-12:** Re-enrollment with a new token and attempt can reuse the installation ID, updates its current Agent metadata, and creates a distinct active binding.
 
 ## 8. Open decisions / change control
 
@@ -163,7 +167,7 @@ sequenceDiagram
 | --------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
 | Reissue policy when an unconsumed bootstrap token exists              | **Proposed:** new issuance invalidates previous token; confirm before I1 merge. |
 | Exact Node eligibility check (location/retirement and other policies) | **Confirm with Asset & Topology** before I1.                                    |
-| Credential expiration, renewal and rotation                           | **Open**; do not infer from enrollment response.                                |
+| Credential expiration, renewal and rotation                           | **Out of I4**; credentials have no expiry in this increment.                   |
 | Lost-response credential recovery/security                            | **Approved:** AES-256-GCM encrypted result escrow for 24 hours; recovery requires the same attempt ID, original bootstrap token and immutable request fingerprint. |
 | Unlink, uninstall-report and Control Plane API shapes                 | **Outside current OpenAPI**; design in later increments.                        |
 | Administrator/Technician notification on registration failure         | **Deferred**; logging/audit first, do not promise proactive notification.       |

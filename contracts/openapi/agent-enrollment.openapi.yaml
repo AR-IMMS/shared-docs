@@ -3,9 +3,10 @@ info:
   title: AR-IMMS Agent Enrollment API
   version: 0.1.0
   description: |
-    Contract-first baseline for Flow 2 / Agent Enrollment (increments I1-I3).
-    This specification defines bootstrap-token issuance and Agent enrollment only.
-    It does not define Control Plane, credential renewal, revocation or uninstall APIs.
+    Contract-first baseline for Flow 2 / Agent Enrollment (increments I1-I4).
+    This specification defines bootstrap-token issuance, Agent enrollment, and
+    Agent binding revocation. It does not define Control Plane, heartbeat,
+    credential renewal, telemetry ingestion, or uninstall APIs.
 
     The request and success response shapes are stable v1. A matching retry within
     24 hours returns the committed result and credential after Core verifies the
@@ -18,6 +19,8 @@ tags:
     description: Admin-facing enrollment preparation
   - name: Enrollment
     description: Agent-facing initial registration
+  - name: Bindings
+    description: Admin-facing Agent binding lifecycle
 paths:
   /api/v1/nodes/{nodeId}/agent-bootstrap-tokens:
     post:
@@ -63,6 +66,37 @@ paths:
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
         '429': { $ref: '#/components/responses/Problem' }
+  /api/v1/agent-bindings/{bindingId}/revoke:
+    post:
+      tags: [Bindings]
+      operationId: revokeAgentBinding
+      summary: Revoke an Agent binding and its credentials
+      description: |
+        Requires an authenticated human with the `agent:manage` permission.
+        Revocation is idempotent: the first and repeated calls return 204. Core
+        retains the installation and historical binding, marks associated active
+        credentials revoked, and records one audit fact in the same transaction.
+        A revoked installation can enroll again with a new bootstrap token and
+        attempt ID; Core reuses its installation identity and updates software,
+        environment, and metadata while retaining the old binding.
+      security:
+        - humanBearer: []
+      parameters:
+        - name: bindingId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Existing Agent binding ID
+      responses:
+        '204':
+          description: Binding is now revoked or was already revoked
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
   /api/v1/agent-enrollments:
     post:
       tags: [Enrollment]
@@ -87,6 +121,11 @@ paths:
         alone never authorizes recovery.
         After the recovery window, Core returns 410 while retaining the binding and
         credential hash; it does not create another enrollment.
+        If the associated binding or credential has been revoked, Core returns
+        410 ENROLLMENT_RECOVERY_REVOKED and never returns the encrypted credential.
+        A new authorized enrollment may reuse the same installation ID after
+        revocation; Core updates the installation's Agent version, environment,
+        and metadata and creates a new binding and credential.
         Enrollment success does not mean Collector activation or telemetry health.
       security: []
       requestBody:
@@ -156,6 +195,10 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: Human IAM authentication; actual browser-cookie transport may also be supported by Core.
+    agentBearer:
+      type: http
+      scheme: bearer
+      description: Opaque credential for explicitly Agent-authenticated Core APIs only; not valid for Human/Admin APIs or OTLP Gateway authentication.
   schemas:
     BootstrapTokenResponse:
       type: object
@@ -309,6 +352,10 @@ components:
             - INSTALLATION_ALREADY_BOUND
             - ENROLLMENT_ATTEMPT_CONFLICT
             - ENROLLMENT_RECOVERY_EXPIRED
+            - ENROLLMENT_RECOVERY_REVOKED
+            - INVALID_AGENT_CREDENTIAL
+            - AGENT_AUTHENTICATION_UNAVAILABLE
+            - AGENT_REVOCATION_UNAVAILABLE
             - RATE_LIMIT_EXCEEDED
             - ENROLLMENT_UNAVAILABLE
             - NODE_NOT_ELIGIBLE
