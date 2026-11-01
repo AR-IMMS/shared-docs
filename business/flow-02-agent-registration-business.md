@@ -109,7 +109,7 @@ sequenceDiagram
 | EX-03 | Two installations try to bind to the same Node                                | At most one succeeds; the other receives conflict.                                                                                        |
 | EX-04 | One installation tries to hold multiple active Node bindings                  | Reject the conflicting enrollment.                                                                                                        |
 | EX-05 | Network times out after Core commits enrollment                               | Agent retries the **same attempt ID, bootstrap token and unchanged request**. Core returns the original result for 24 hours; after that it returns `410 ENROLLMENT_RECOVERY_EXPIRED` without creating another binding. |
-| EX-06 | Core temporary outage / rate limit                                            | Agent retries the same operation using bounded backoff; no duplicate binding or automatic Collector disruption.                           |
+| EX-06 | Core temporary outage / optional deployment-edge rate limit                    | For an uncertain enrollment outcome, retry the same attempt ID, bootstrap token and immutable request using bounded client backoff. A deployment edge may return 429; respect `Retry-After` when present. Core does not implement rate limiting for these endpoints. |
 | EX-07 | Local credential persistence fails                                            | Agent retains recoverable attempt state; do not claim registration has completed locally.                                                 |
 | EX-08 | Agent metadata is incomplete                                                  | Required schema fields are validated; optional data may be omitted; metadata does not determine authorization.                            |
 
@@ -165,11 +165,16 @@ sequenceDiagram
 
 | Decision                                                              | Status                                                                          |
 | --------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| Reissue policy when an unconsumed bootstrap token exists              | **Proposed:** new issuance invalidates previous token; confirm before I1 merge. |
-| Exact Node eligibility check (location/retirement and other policies) | **Confirm with Asset & Topology** before I1.                                    |
+| Reissue policy when an unconsumed bootstrap token exists              | **Confirmed for I1:** new issuance atomically invalidates the previous unused token for that Node. |
+| Node eligibility for bootstrap issuance and enrollment                 | **Confirmed for I1:** Node exists, lifecycle is active, placement is active, and no active Agent binding exists; QR mapping is not required. |
 | Credential expiration, renewal and rotation                           | **Out of I4**; credentials have no expiry in this increment.                   |
 | Lost-response credential recovery/security                            | **Approved:** AES-256-GCM encrypted result escrow for 24 hours; recovery requires the same attempt ID, original bootstrap token and immutable request fingerprint. |
-| Unlink, uninstall-report and Control Plane API shapes                 | **Outside current OpenAPI**; design in later increments.                        |
+| Agent binding revocation API                                           | **Implemented in I4 and published in OpenAPI:** `POST /api/v1/agent-bindings/{bindingId}/revoke`, `agent:manage`, idempotent 204. |
+| Control Plane, heartbeat, uninstall-report and telemetry API shapes   | **Outside current OpenAPI**; design and implement in later increments.          |
 | Administrator/Technician notification on registration failure         | **Deferred**; logging/audit first, do not promise proactive notification.       |
 
 **Documentation policy:** This file describes shared business behavior, not MongoDB schemas, NestJS classes or internal server implementation. Technical design belongs in `docs/local` of the Core Backend repository.
+
+## 9. Agent integration readiness boundary
+
+Core currently publishes bootstrap-token issuance, initial/recovered enrollment, and Admin binding revocation. The `agentBearer` scheme is reserved for explicitly protected Agent-facing Core APIs; no production I1-I4 operation currently accepts an Agent credential. The enrollment response's Control Plane URL is configuration data only and does not make Control Plane operations available. Agent operational readiness therefore remains separate from Backend Enrollment readiness.
