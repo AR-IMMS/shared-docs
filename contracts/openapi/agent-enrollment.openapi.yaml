@@ -3,13 +3,19 @@ info:
   title: AR-IMMS Agent Enrollment API
   version: 0.1.0
   description: |
-    Contract-first baseline for Flow 2 / Agent Enrollment (increments I1-I3).
-    This specification defines bootstrap-token issuance and Agent enrollment only.
-    It does not define Control Plane, credential renewal, revocation or uninstall APIs.
+    Core enrollment contract for Flow 2 / Agent Enrollment (increments I1-I4).
+    This specification defines bootstrap-token issuance, Agent enrollment, and
+    Agent binding revocation. It does not define Control Plane, heartbeat,
+    credential renewal, telemetry ingestion, or uninstall APIs.
 
-    Stability: Request and initial success response shapes are baseline v1.
-    The exact lost-response credential recovery security mechanism is NOT finalized;
-    consumers must not assume a 200 response can always replay an access token.
+    The reusable agentBearer scheme describes authentication for explicitly
+    Agent-authenticated Core operations. No operation in this contract currently
+    accepts an Agent credential. The enrollment response's control_plane URL is
+    configuration data only; it does not imply that the referenced API exists.
+
+    The request and success response shapes are stable v1. A matching retry within
+    24 hours returns the committed result and credential after Core verifies the
+    original bootstrap token and immutable request fingerprint.
 servers:
   - url: https://core.example.com
     description: Example deployment; configure a trusted Core origin in production
@@ -18,6 +24,8 @@ tags:
     description: Admin-facing enrollment preparation
   - name: Enrollment
     description: Agent-facing initial registration
+  - name: Bindings
+    description: Admin-facing Agent binding lifecycle
 paths:
   /api/v1/nodes/{nodeId}/agent-bootstrap-tokens:
     post:
@@ -26,10 +34,11 @@ paths:
       summary: Issue a Node-bound single-use bootstrap token
       description: |
         Requires an authenticated, authorized human administrator.
-        The Node must exist, be eligible for Agent registration and have no active binding.
+        The Node must exist, have active lifecycle status and an active placement,
+        and have no active Agent binding. QR mapping is not required.
         Token lifetime is 600 seconds. Core stores only a verifier/hash and displays
         the plaintext bootstrap token once in this response. A new issuance invalidates
-        any earlier unconsumed token for the same Node (proposed baseline).
+        any earlier unconsumed token for the same Node.
       security:
         - humanBearer: []
       parameters:
@@ -46,7 +55,7 @@ paths:
           headers:
             Cache-Control:
               schema: { type: string }
-              description: Should be no-store
+              description: Core sends no-store because this response contains a secret.
           content:
             application/json:
               schema:
@@ -57,12 +66,47 @@ paths:
                   bootstrap_token: arimms_bt_example-secret
                   node_id: a3cb4e2c-15c1-4c3d-8cc9-110a47ac7001
                   expires_at: '2026-10-30T10:10:00Z'
+                meta:
+                  request_id: req_01JEXAMPLE
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
-        '429': { $ref: '#/components/responses/Problem' }
+        '429': { $ref: '#/components/responses/RateLimitedProblem' }
+        '500': { $ref: '#/components/responses/Problem' }
+  /api/v1/agent-bindings/{bindingId}/revoke:
+    post:
+      tags: [Bindings]
+      operationId: revokeAgentBinding
+      summary: Revoke an Agent binding and its credentials
+      description: |
+        Requires an authenticated human with the `agent:manage` permission.
+        Revocation is idempotent: the first and repeated calls return 204. Core
+        retains the installation and historical binding, marks associated active
+        credentials revoked, and records one audit fact in the same transaction.
+        A revoked installation can enroll again with a new bootstrap token and
+        attempt ID; Core reuses its installation identity and updates software,
+        environment, and metadata while retaining the old binding.
+      security:
+        - humanBearer: []
+      parameters:
+        - name: bindingId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Existing Agent binding ID
+      responses:
+        '204':
+          description: Binding is now revoked or was already revoked
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
+        '429': { $ref: '#/components/responses/RateLimitedProblem' }
   /api/v1/agent-enrollments:
     post:
       tags: [Enrollment]
@@ -79,9 +123,19 @@ paths:
         Token validation, consumption, binding uniqueness, credential issuance and
         attempt recording are coordinated atomically using MongoDB transactions.
 
-        201 indicates a newly committed enrollment. 200 is reserved for recovery of a
-        previously committed matching attempt. Secure replay/re-issuance of the
-        credential on 200 is a design dependency, NOT yet guaranteed by this contract.
+        201 indicates a newly committed enrollment. If the response was lost, the
+        same attempt ID, bootstrap token and immutable request recover the original
+        committed result for 24 hours. Core stores the recovery result only as
+        authenticated ciphertext. The request fingerprint is deterministic over
+        canonical enrollment fields and the bootstrap-token hash. The attempt ID
+        alone never authorizes recovery.
+        After the recovery window, Core returns 410 while retaining the binding and
+        credential hash; it does not create another enrollment.
+        If the associated binding or credential has been revoked, Core returns
+        410 ENROLLMENT_RECOVERY_REVOKED and never returns the encrypted credential.
+        A new authorized enrollment may reuse the same installation ID after
+        revocation; Core updates the installation's Agent version, environment,
+        and metadata and creates a new binding and credential.
         Enrollment success does not mean Collector activation or telemetry health.
       security: []
       requestBody:
@@ -111,7 +165,7 @@ paths:
           headers:
             Cache-Control:
               schema: { type: string }
-              description: Should be no-store
+              description: Core sends no-store because this response contains a credential.
           content:
             application/json:
               schema:
@@ -133,17 +187,19 @@ paths:
                 meta:
                   request_id: req_01JEXAMPLE
         '200':
-          description: |
-            Existing committed attempt recognized. Credential recovery behavior is
-            pending a security decision; do not assume this always contains the
-            original credential until the recovery design is frozen.
+          description: Original committed enrollment result recovered after a matching retry
+          headers:
+            Cache-Control:
+              schema: { type: string }
+              description: Core sends no-store because this response contains a credential.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/EnrollmentRecoveryResponse'
+                $ref: '#/components/schemas/EnrollmentResponse'
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
+        '410': { $ref: '#/components/responses/Problem' }
         '429': { $ref: '#/components/responses/RateLimitedProblem' }
         '503': { $ref: '#/components/responses/Problem' }
 components:
@@ -153,11 +209,15 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: Human IAM authentication; actual browser-cookie transport may also be supported by Core.
+    agentBearer:
+      type: http
+      scheme: bearer
+      description: Opaque credential reserved for explicitly Agent-authenticated Core APIs; no current operation in this contract accepts it. Core resolves trusted installationId, bindingId, and nodeId only when credential and binding are active and the installation association is consistent. It is not valid for Human/Admin APIs or OTLP Gateway authentication.
   schemas:
     BootstrapTokenResponse:
       type: object
       additionalProperties: false
-      required: [data]
+      required: [data, meta]
       properties:
         data:
           type: object
@@ -169,10 +229,12 @@ components:
               {
                 type: string,
                 writeOnly: false,
-                description: Secret; shown exactly once,
+                description: Opaque single-use secret accepted only by enrollment; it cannot authenticate Agent API requests.,
               }
             node_id: { type: string, format: uuid }
             expires_at: { type: string, format: date-time }
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
     EnrollmentRequest:
       type: object
       additionalProperties: false
@@ -246,20 +308,6 @@ components:
           $ref: '#/components/schemas/EnrollmentResult'
         meta:
           $ref: '#/components/schemas/ResponseMeta'
-    EnrollmentRecoveryResponse:
-      type: object
-      description: |
-        Provisional recovery envelope; final credential recovery response is
-        intentionally left open until the security mechanism is approved.
-      additionalProperties: true
-      required: [data]
-      properties:
-        data:
-          type: object
-          additionalProperties: true
-          description: Existing enrollment result, with credential recovery semantics pending
-        meta:
-          $ref: '#/components/schemas/ResponseMeta'
     EnrollmentResult:
       type: object
       additionalProperties: false
@@ -285,9 +333,12 @@ components:
             access_token:
               type: string
               minLength: 1
-              description: Opaque bearer secret for Core Agent-facing APIs only
+              description: Opaque bearer secret reserved for future explicitly Agent-authenticated Core APIs; none are currently published.
         control_plane:
           type: object
+          description: |
+            Configuration data returned as supplied by Core. The URL is a future
+            Control Plane location; this contract defines no operations at it.
           additionalProperties: false
           required: [base_url, poll_interval_seconds]
           properties:
@@ -301,7 +352,7 @@ components:
         request_id: { type: string }
     ProblemDetails:
       type: object
-      description: Core Problem Details (RFC 9457) with a stable application error code
+      description: Core Problem Details (RFC 9457) with a stable application error code. The code catalog distinguishes business outcomes, platform validation/authorization failures, and infrastructure availability failures.
       required: [type, title, status, code]
       properties:
         type: { type: string, format: uri-reference }
@@ -312,18 +363,27 @@ components:
         code:
           type: string
           enum:
-            - INVALID_ENROLLMENT_PAYLOAD
+            - VALIDATION_ERROR
+            - BAD_REQUEST
+            - UNAUTHORIZED
+            - CONFLICT
             - INVALID_BOOTSTRAP_TOKEN
             - BOOTSTRAP_TOKEN_EXPIRED
             - BOOTSTRAP_TOKEN_CONSUMED
             - NODE_ALREADY_BOUND
             - INSTALLATION_ALREADY_BOUND
             - ENROLLMENT_ATTEMPT_CONFLICT
-            - RATE_LIMIT_EXCEEDED
+            - ENROLLMENT_RECOVERY_EXPIRED
+            - ENROLLMENT_RECOVERY_REVOKED
+            - INVALID_AGENT_CREDENTIAL
+            - AGENT_AUTHENTICATION_UNAVAILABLE
+            - AGENT_REVOCATION_UNAVAILABLE
             - ENROLLMENT_UNAVAILABLE
+            - INTERNAL_SERVER_ERROR
             - NODE_NOT_ELIGIBLE
             - FORBIDDEN
             - NOT_FOUND
+            - TOO_MANY_REQUESTS
         request_id: { type: string }
   responses:
     Problem:
@@ -340,7 +400,10 @@ components:
             detail: The enrollment token has expired.
             request_id: req_01JEXAMPLE
     RateLimitedProblem:
-      description: Too many requests
+      description: |
+        Optional response from a deployment edge when it applies rate limits.
+        Core does not implement rate limiting for these operations. If the edge
+        returns this response, Agent clients should respect Retry-After when present.
       headers:
         Retry-After:
           schema: { type: string }
