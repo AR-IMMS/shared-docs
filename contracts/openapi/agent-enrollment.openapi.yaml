@@ -3,7 +3,7 @@ info:
   title: AR-IMMS Agent Enrollment API
   version: 0.1.0
   description: |
-    Core enrollment contract for Flow 2 / Agent Enrollment (increments I1-I4).
+    Core enrollment contract for Flow 2 / Agent Enrollment (increments I1-I6).
     This specification defines bootstrap-token issuance, Agent enrollment, and
     Agent binding revocation. It does not define Control Plane, heartbeat,
     credential renewal, telemetry ingestion, or uninstall APIs.
@@ -26,6 +26,8 @@ tags:
     description: Agent-facing initial registration
   - name: Bindings
     description: Admin-facing Agent binding lifecycle
+  - name: Agent Registry
+    description: Admin-facing read-only installation and binding queries
 paths:
   /api/v1/nodes/{nodeId}/agent-bootstrap-tokens:
     post:
@@ -40,7 +42,7 @@ paths:
         the plaintext bootstrap token once in this response. A new issuance invalidates
         any earlier unconsumed token for the same Node.
       security:
-        - humanBearer: []
+        - HumanAccessToken: []
       parameters:
         - name: nodeId
           in: path
@@ -89,7 +91,7 @@ paths:
         attempt ID; Core reuses its installation identity and updates software,
         environment, and metadata while retaining the old binding.
       security:
-        - humanBearer: []
+        - HumanAccessToken: []
       parameters:
         - name: bindingId
           in: path
@@ -202,9 +204,113 @@ paths:
         '410': { $ref: '#/components/responses/Problem' }
         '429': { $ref: '#/components/responses/RateLimitedProblem' }
         '503': { $ref: '#/components/responses/Problem' }
+  /api/v1/agents:
+    get:
+      tags: [Agent Registry]
+      operationId: listAgentInstallations
+      summary: List Agent installations
+      description: |
+        Requires an authenticated human with `agent:manage`. Results use the
+        standard cursor pagination envelope and are ordered by installation ID.
+        `node_id` matches the current active binding. Arbitrary enrollment
+        metadata and credential, token, and recovery data are never returned.
+        Registration state does not indicate connectivity or telemetry health.
+      security:
+        - HumanAccessToken: []
+      x-required-permissions: [agent:manage]
+      parameters:
+        - name: page_size
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string, maxLength: 512 }
+        - name: node_id
+          in: query
+          required: false
+          description: Return the installation currently bound to this Node, if any.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Cursor-paginated installations
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentInstallationListResponse'
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '500': { $ref: '#/components/responses/Problem' }
+  /api/v1/agents/{installationId}:
+    get:
+      tags: [Agent Registry]
+      operationId: getAgentInstallation
+      summary: Get an Agent installation
+      description: |
+        Requires an authenticated human with `agent:manage`. Returns installation
+        identity, software version, environment and current active binding, if
+        present. It does not return arbitrary metadata or secret material.
+      security:
+        - HumanAccessToken: []
+      x-required-permissions: [agent:manage]
+      parameters:
+        - name: installationId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Installation and current binding, if present
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentInstallationResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '500': { $ref: '#/components/responses/Problem' }
+  /api/v1/agents/{installationId}/bindings:
+    get:
+      tags: [Agent Registry]
+      operationId: listAgentInstallationBindings
+      summary: List binding history for an Agent installation
+      description: |
+        Requires an authenticated human with `agent:manage`. Includes active and
+        revoked binding records in reverse creation order. Revoking actor data is
+        available through Audit, not this Registry response.
+      security:
+        - HumanAccessToken: []
+      x-required-permissions: [agent:manage]
+      parameters:
+        - name: installationId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: page_size
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string, maxLength: 512 }
+      responses:
+        '200':
+          description: Cursor-paginated binding history
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentBindingHistoryListResponse'
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '500': { $ref: '#/components/responses/Problem' }
 components:
   securitySchemes:
-    humanBearer:
+    HumanAccessToken:
       type: http
       scheme: bearer
       bearerFormat: JWT
@@ -385,6 +491,95 @@ components:
             - NOT_FOUND
             - TOO_MANY_REQUESTS
         request_id: { type: string }
+    AgentInstallationResponse:
+      type: object
+      required: [data, meta]
+      properties:
+        data: { $ref: '#/components/schemas/AgentInstallation' }
+        meta: { $ref: '#/components/schemas/ResponseMeta' }
+    AgentInstallationListResponse:
+      type: object
+      required: [data, meta, pagination]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/AgentInstallation' }
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+        pagination: { $ref: '#/components/schemas/CursorPagination' }
+    AgentBindingHistoryListResponse:
+      type: object
+      required: [data, meta, pagination]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/AgentBindingHistoryItem' }
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+        pagination: { $ref: '#/components/schemas/CursorPagination' }
+    AgentInstallation:
+      type: object
+      additionalProperties: false
+      required: [installation_id, agent_version, environment, created_at, updated_at, current_binding]
+      properties:
+        installation_id: { type: string, format: uuid }
+        agent_version: { type: string }
+        environment:
+          type: object
+          additionalProperties: false
+          required: [os, architecture]
+          properties:
+            os: { type: string }
+            architecture: { type: string }
+            hostname: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at:
+          type: [string, 'null']
+          format: date-time
+          description: Null until the installation is updated by re-enrollment; thereafter the most recent update time.
+        current_binding:
+          description: Null when the installation has no active binding, including after revocation.
+          oneOf:
+            - $ref: '#/components/schemas/AgentActiveBinding'
+            - type: 'null'
+    AgentActiveBinding:
+      type: object
+      additionalProperties: false
+      required: [binding_id, node_id, status, created_at]
+      properties:
+        binding_id: { type: string, format: uuid }
+        node_id: { type: string, format: uuid }
+        status: { type: string, const: active }
+        created_at: { type: string, format: date-time }
+    AgentBindingHistoryItem:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [binding_id, node_id, status, created_at]
+          properties:
+            binding_id: { type: string, format: uuid }
+            node_id: { type: string, format: uuid }
+            status: { type: string, const: active }
+            created_at: { type: string, format: date-time }
+        - type: object
+          additionalProperties: false
+          required: [binding_id, node_id, status, created_at, revoked_at]
+          properties:
+            binding_id: { type: string, format: uuid }
+            node_id: { type: string, format: uuid }
+            status: { type: string, const: revoked }
+            created_at: { type: string, format: date-time }
+            revoked_at:
+              type: string
+              format: date-time
+              description: Timestamp recorded atomically when the binding is revoked.
+    CursorPagination:
+      type: object
+      additionalProperties: false
+      required: [type, next_cursor]
+      properties:
+        type: { type: string, const: cursor }
+        next_cursor: { type: [string, 'null'] }
   responses:
     Problem:
       description: Failure described by the response status and application code
