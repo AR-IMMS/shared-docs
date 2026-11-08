@@ -123,7 +123,14 @@ sequenceDiagram
 4. An unlinked Node retains its Asset & Topology placement; unlink is **not** asset `unassigned` or `retired`.
 5. Re-enrollment is a new authorized operation with a new bootstrap token and attempt ID. It may reuse the stable installation ID, updates Agent version/environment/metadata, and creates a new binding without restoring the revoked binding.
 
-### 5.2 Uninstall (subsequent increment)
+### 5.2 Admin Registry visibility (I6)
+
+1. An Admin with `agent:manage` may list Agent installations, optionally filter by a Node's current active binding, view installation details and its current binding, or inspect active and revoked binding history.
+2. Registry queries preserve stable installation identity and binding history. They return Node IDs only; Asset & Topology remains the source of Node details.
+3. Admin Registry responses omit arbitrary Agent metadata and all credentials, token hashes, and encrypted recovery material. Revocation actor details remain in Audit.
+4. Registry state describes registration only. It does not establish Agent connectivity, Collector activation, or telemetry health.
+
+### 5.3 Uninstall (subsequent increment)
 
 1. Technician invokes local uninstall.
 2. Agent attempts a final notification when possible, then removes Agent-owned components and protected local secrets under OS policy.
@@ -160,6 +167,7 @@ sequenceDiagram
 - **AC-10:** Revoking a binding invalidates its active credentials, preserves history, and appends one audit fact; repeated revocation returns 204 without another fact.
 - **AC-11:** Matching I3 recovery after revocation returns `410 ENROLLMENT_RECOVERY_REVOKED` and never reveals the credential.
 - **AC-12:** Re-enrollment with a new token and attempt can reuse the installation ID, updates its current Agent metadata, and creates a distinct active binding.
+- **AC-13:** An authorized Admin can list installations, inspect current binding and read binding history without receiving arbitrary metadata or secret material; this view does not represent connectivity or telemetry health.
 
 ## 8. Open decisions / change control
 
@@ -177,4 +185,4 @@ sequenceDiagram
 
 ## 9. Agent integration readiness boundary
 
-Core currently publishes bootstrap-token issuance, initial/recovered enrollment, and Admin binding revocation. The `agentBearer` scheme is reserved for explicitly protected Agent-facing Core APIs; no production I1-I4 operation currently accepts an Agent credential. The enrollment response's Control Plane URL is configuration data only and does not make Control Plane operations available. Agent operational readiness therefore remains separate from Backend Enrollment readiness.
+Core publishes bootstrap-token issuance, initial/recovered enrollment, Admin binding revocation, and read-only Admin Registry queries. The `agentBearer` scheme is reserved for explicitly protected Agent-facing Core APIs; no production I1-I6 operation currently accepts an Agent credential. The enrollment response's Control Plane URL is configuration data only and does not make Control Plane operations available. Agent operational readiness therefore remains separate from Backend Enrollment readiness.
