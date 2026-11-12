@@ -20,3 +20,15 @@ repository's architecture and runbook documentation.
 ## Engineering guidance
 
 - [AI-Assisted Development Policy](engineering/AI_CODING_POLICY.md)
+
+## Frontend guidance and API contracts
+
+- [Frontend implementation guide](guides/frontend/frontend-implementation-guide.md)
+  — shared design and coding principles.
+- [IAM frontend guide](guides/frontend/iam-frontend-implementation-guide.md)
+  and [walkthrough](guides/frontend/iam-frontend-walkthrough.md) — IAM-specific
+  additions to the shared guide.
+- [Platform HTTP response guide](guides/frontend/platform-http-response-guide.md)
+  — frontend handling of Core response envelopes and errors.
+- OpenAPI contracts and reusable HTTP schemas live in `contracts/openapi/`;
+  keep this directory for contract files, not narrative guides.
