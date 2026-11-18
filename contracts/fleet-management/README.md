@@ -57,3 +57,27 @@
 ## Intended repository workflow
 
 These files are ready to be proposed in the `docs/shared` Git submodule. **Do not modify the gitlink, publish, or overwrite existing shared contracts automatically.** Core, Fleet and Agent owners should approve revisions and then publish the final wire schemas/OpenAPI. Links to old local Core-backed OpAMP contract remain historical implementation evidence.
+
+## Implementation handoff navigation
+
+Contracts C01–C04 remain the single source of truth for cross-system behavior,
+wire proposals and OPEN decisions. The following guides summarize accepted
+ownership and organize implementation; they do not approve draft schemas.
+
+- [B+ architecture, ownership and identity](../../architecture/fleet-management/overview.md)
+- [Implementation roadmap](../../integration/fleet-management/implementation-roadmap.md)
+- [Verification matrix and evidence](../../integration/fleet-management/verification-matrix.md)
+- [Agent integration handoff](../../integration/fleet-management/agent-handoff.md)
+
+**Evidence update (2026-11-19): Mock Fleet PASS; production Fleet/NestJS
+interoperability NOT VERIFIED.** Agent PR #40 merged at
+15cbe300ef64fa96d1eeacc53800957f1a6f7f61; Windows/Ubuntu integration
+[CI 44391516366](https://github.com/AR-IMMS/telemetry-agent/actions/runs/44391516366)
+passed. Mock schemas remain provisional and test-only. Platform skips and
+coverage boundaries are listed in the verification matrix. The baseline near
+the top of this document is the historical contract-drafting baseline.
+
+Decision labels: **ACCEPTED** means approved architecture/ownership;
+**PROPOSED** means a reviewable candidate; **OPEN** means an unresolved decision
+requiring its named owners. This documentation update does not promote proposed
+endpoints, fields or policies to accepted contracts.
