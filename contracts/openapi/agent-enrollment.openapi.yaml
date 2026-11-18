@@ -457,40 +457,40 @@ components:
       properties:
         request_id: { type: string }
     ProblemDetails:
-      type: object
-      description: Core Problem Details (RFC 9457) with a stable application error code. The code catalog distinguishes business outcomes, platform validation/authorization failures, and infrastructure availability failures.
-      required: [type, title, status, code]
-      properties:
-        type: { type: string, format: uri-reference }
-        title: { type: string }
-        status: { type: integer }
-        detail: { type: string }
-        instance: { type: string }
-        code:
-          type: string
-          enum:
-            - VALIDATION_ERROR
-            - BAD_REQUEST
-            - UNAUTHORIZED
-            - CONFLICT
-            - INVALID_BOOTSTRAP_TOKEN
-            - BOOTSTRAP_TOKEN_EXPIRED
-            - BOOTSTRAP_TOKEN_CONSUMED
-            - NODE_ALREADY_BOUND
-            - INSTALLATION_ALREADY_BOUND
-            - ENROLLMENT_ATTEMPT_CONFLICT
-            - ENROLLMENT_RECOVERY_EXPIRED
-            - ENROLLMENT_RECOVERY_REVOKED
-            - INVALID_AGENT_CREDENTIAL
-            - AGENT_AUTHENTICATION_UNAVAILABLE
-            - AGENT_REVOCATION_UNAVAILABLE
-            - ENROLLMENT_UNAVAILABLE
-            - INTERNAL_SERVER_ERROR
-            - NODE_NOT_ELIGIBLE
-            - FORBIDDEN
-            - NOT_FOUND
-            - TOO_MANY_REQUESTS
-        request_id: { type: string }
+      description: |
+        Core Problem Details response shape. The shared baseline defines the
+        fields, including field-level validation errors; this Agent-specific
+        schema narrows the top-level code to the outcomes used by enrollment.
+      allOf:
+        - $ref: ./core-api-baseline.openapi.yaml#/components/schemas/ErrorResponse
+        - type: object
+          properties:
+            code:
+              type: string
+              enum:
+                - VALIDATION_ERROR
+                - BAD_REQUEST
+                - UNAUTHORIZED
+                - CONFLICT
+                - INVALID_BOOTSTRAP_TOKEN
+                - BOOTSTRAP_TOKEN_EXPIRED
+                - BOOTSTRAP_TOKEN_CONSUMED
+                - NODE_ALREADY_BOUND
+                - INSTALLATION_ALREADY_BOUND
+                - ENROLLMENT_ATTEMPT_CONFLICT
+                - ENROLLMENT_RECOVERY_EXPIRED
+                - ENROLLMENT_RECOVERY_REVOKED
+                - INVALID_AGENT_CREDENTIAL
+                - AGENT_AUTHENTICATION_UNAVAILABLE
+                - AGENT_REVOCATION_UNAVAILABLE
+                - ENROLLMENT_UNAVAILABLE
+                - INTERNAL_SERVER_ERROR
+                - NODE_NOT_ELIGIBLE
+                - FORBIDDEN
+                - NOT_FOUND
+                - TOO_MANY_REQUESTS
+                - UNPROCESSABLE_ENTITY
+                - HTTP_ERROR
     AgentInstallationResponse:
       type: object
       required: [data, meta]
@@ -588,7 +588,7 @@ components:
           schema:
             $ref: '#/components/schemas/ProblemDetails'
           example:
-            type: https://docs.ar-imms.dev/problems/bootstrap-token-expired
+            type: about:blank
             title: Bootstrap token expired
             status: 401
             code: BOOTSTRAP_TOKEN_EXPIRED
