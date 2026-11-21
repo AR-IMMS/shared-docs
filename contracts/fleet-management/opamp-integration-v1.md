@@ -69,6 +69,10 @@ The exact order of initial Hello/config exchange is governed by the native OpAMP
 ## Config and status invariants
 
 - Identity/session: authenticate credential first; bind `instance_uid` only to authenticated `agent_id` using a controlled mapping. Duplicate UID across active unauthorized installations is a conflict, never silently remapped.
+- `agent_id` and `instance_uid` are separate identifiers. **PROPOSED implementation rule:** bind the first 16-byte UID only after credential verification; a reconnect must use that same UID. A changed UID conflicts; remapping is never implicit.
+- **PROPOSED implementation rule:** keep credential status and the optional UID on the same installation record. Conditional single-document binding and revocation updates provide an atomic order without a multi-document transaction. The callback checks status and UID for every message. A revoke that wins first denies the callback; a callback authorized before revocation may finish, and subsequent callbacks are denied. Immediate asynchronous socket termination remains an OPEN enforcement choice.
+- **VERIFIED LOCALLY ON WINDOWS:** official Supervisor v0.160.0 kept its UID after restart with the same state directory and generated a different UID with a fresh directory. Ubuntu CI is pending; reinstall, upgrade, and other state-loss behavior remain OPEN and are not inferred from the OpAMP UID field.
+- **PROPOSED recovery policy:** no automatic UID replacement after continuity loss. A future recovery operation must have separate authorization, audit, and an expected-current-UID condition. Such an operation is not implemented.
 - Remote configuration bytes/content hash are protocol fields; Fleet desired revision is **not** a protocol-provided revision. Persist immutable association of config hash and Fleet revision/publication ID. Canonicalization must match actual bytes sent.
 - `APPLIED` for an old hash **is not** latest desired applied. Unknown/unpublished hashes remain UNATTRIBUTED, not inferred from current desired.
 - Supervisor `automatic_config_rollback` only covers behavior actually supported by pinned executable; Fleet must not pretend successful startup rollback proves delivery or all runtime fault recovery.
@@ -118,3 +122,7 @@ sequenceDiagram
 - O04: local/remote/fallback merge contract and owner namespacing, invalid config rollback scope.
 - O05: credential scope/rotation and revocation timing with existing online sessions; fallback during Fleet outage.
 - O06: exact Fleet session/auth persistence design and cross-system API credentials (outside protocol).
+
+## Fleet Manager identity implementation proposal (2026-11-21; not contract approval)
+
+The Fleet branch now contains Mongo-backed credential digest verification and one-time UID pinning, with same-UID reconnect checks, a unique UID constraint, explicit revocation state, and per-message authorization. The listener remains disabled by application wiring. Credential provisioning/revocation endpoints, Core authorization, token expiry and rotation, and recovery/rebinding operations are not present. CI now defines two distinct acceptance jobs: official Supervisor UID continuity on Ubuntu and Windows, and Mongo-backed Fleet binding with the official Supervisor on Ubuntu. The workflow downloads the pinned v0.160.0 binary and verifies its published SHA-256 sidecar and module build information. The tests are **IMPLEMENTED; local Windows UID continuity and Mongo-backed Fleet binding runs PASSED; hosted CI results are pending**. Existing Mongo-only tests do not prove official Supervisor behavior. Any future outbound delivery must also enforce the revocation fence before sending. Neither test approves an automatic recovery/rebind policy.

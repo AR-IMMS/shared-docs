@@ -105,6 +105,10 @@ The remote Agent enrollment endpoint and Supervisor OpAMP WSS endpoint are **dif
 - `host_type`: derived `BARE_METAL | VM | KUBERNETES | UNKNOWN` display field; independently store `compute_type: BARE_METAL | VM | UNKNOWN`, `orchestrator: NONE | KUBERNETES | UNKNOWN`, `deployment_scope: HOST_SERVICE | K8S_NODE_AGENT | K8S_POD | UNKNOWN`.
 - Fleet must handle cloned VM with duplicate `host_id` but distinct `agent_id`: flag collision, never auto-merge, never authorize on fingerprint alone.
 - Official Supervisor `instance_uid` is a **protocol ID**, not auth. Fleet binds it against the authenticated installation; mapping equality with Agent UUID is **not approved** until proven against pinned runtime.
+- `agent_id` and Supervisor `instance_uid` are distinct. **PROPOSED implementation rule:** first authenticated OpAMP message creates the binding; reconnect requires the same UID; a different UID or UID already assigned to another installation is rejected without remapping.
+- **PROPOSED implementation rule:** credential status and UID binding live in one Fleet identity record so an atomic conditional update can fence binding against revocation. Each handled protocol message rechecks active status. A revoke concurrent with an already authorized callback cannot retract that callback; a revoke that commits first denies it, and later callbacks are denied.
+- **PROPOSED implementation rule:** lost Supervisor state does not cause automatic rebind. Recovery/rebinding requires a separately authorized and audited operation with an expected-current-UID check. No such control-plane operation is implemented yet.
+- **VERIFIED LOCALLY ON WINDOWS:** official Supervisor v0.160.0 kept its UID after restart with the same state directory and generated a different UID with a fresh directory. Ubuntu CI is pending; upgrade, reinstall, and other state-loss behavior remain OPEN. This test evidence does not approve an automatic recovery or rebind rule.
 - Core owns confirmed Node binding and topology relationships; Fleet records its authorized link and observed evidence but cannot unilaterally invent physical placement.
 
 ## Invitation / installation state
@@ -156,3 +160,11 @@ Invitation lifecycle is separate from installation state (`ACTIVE`, `REVOKED`, o
 - E05: stable `instance_uid` configuration and mapping tested against Supervisor v0.160.0.
 - E06: migration of already Core-enrolled installations and compatibility with `--core-origin` CLI.
 - E07: exact endpoint paths, status/error codes, request/response field types and auth transport (OpenAPI pending).
+
+## Fleet Manager implementation proposal (2026-11-21; not contract approval)
+
+The current Fleet branch implements a Mongo-backed verifier that looks up SHA-256 token digests and an atomic per-installation UID binding. Credential records contain the authenticated `agent_id`, non-secret credential record ID, token digest, active/revoked state, and optional hex-encoded 16-byte Supervisor UID. This implementation assumes issued credentials are random high-entropy values of at least 32 bytes; the wire format, generator, expiry, audience/scope, and secret delivery are still OPEN. The Fleet app constructs the verifier and authenticator, but does not activate the OpAMP listener.
+
+The current record has no expiry field; `ACTIVE` credentials remain valid until explicitly revoked. This is an implementation limitation while expiry/rotation policy is **OPEN**, and must be resolved before production listener activation.
+
+Required cross-system acceptance test: run the exact official `cmd/opampsupervisor/v0.160.0` binary with a persistent `storage.directory`, capture the OpAMP UID, stop and restart using that same directory, and compare the UID. Repeat with a fresh storage directory to observe reset behavior. The repository now defines two separate CI evidence levels in `.github/workflows/supervisor-identity.yml`: `uid-continuity` runs the real Supervisor on Ubuntu and Windows, while `fleet-mongo-binding` exercises the Mongo-backed verifier with MongoDB on Ubuntu. Both jobs download the official binary and verify its published SHA-256 sidecar and module build information. **IMPLEMENTED; local Windows UID continuity and Mongo-backed Fleet binding runs PASSED; hosted Ubuntu and Windows CI results are pending.** The test does not establish a recovery or rebind policy. The pinned Supervisor README documents persistent storage and restart reuse, but this alone does not prove UID continuity.
