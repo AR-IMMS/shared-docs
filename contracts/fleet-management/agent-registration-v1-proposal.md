@@ -11,13 +11,13 @@
 
 ## Verified repository snapshot — 2026-11-23
 
-| Repository | Branch / SHA | Current implementation |
+| Repository | Branch / implementation commit | Current implementation |
 |---|---|---|
-| Fleet Manager | feat/agent-registration — e3ebb2a4eb91806f2452ec5671a35cb09687f008 | Invitation, exchange, recovery, status, Node-gate, and secret-free installation lookup routes exist. Enrollment and OpAMP default disabled. Mongo idempotency, encrypted result escrow, credential verifier, and UID binding exist. Routes remain provisional. |
-| Core backend | feat/fleet-core-integration-design — 0aa77ad50c21b1b6b92a1a326489ebac63530547 | Human-authorized invitation/sync controllers and mutual-TLS Fleet client exist. Invitation, operation-status and installation lookup paths now match Fleet. Cancellation and two-step gate compensation still lack Fleet HTTP parity. Legacy Core enrollment remains the default. |
-| Telemetry Agent | chore/v0.1.4a-next — 15cbe300ef64fa96d1eeacc53800957f1a6f7f61 | Existing Core enrollment remains the default. An explicit Fleet-origin CLI path now supports invitation exchange/recovery, protected credential storage, and optional Supervisor provisioning. It is opt-in and does not replace the Core path. |
+| Fleet Manager | feat/agent-registration — 12fa4f981f15e2dd3444b08d3833e617c6f13392 | Invitation, exchange, recovery, status, cancellation, version-fenced two-phase gate compensation, per-Agent credential revocation, and secret-free installation lookup routes are mounted. Enrollment and OpAMP default disabled. Mongo idempotency, encrypted result escrow, credential verifier, and UID binding exist. Credential rotation is not implemented. Routes remain provisional. |
+| Core backend | feat/fleet-core-integration-design — 0c997fb77797a5a6d331fb95c21ae9fbecc69844 | Human-authorized invitation/sync controllers and mutual-TLS Fleet client exist. Invitation, operation-status, installation lookup, cancellation, and two-phase gate adapter paths match Fleet source. Core still authorizes using its existing human and Node rules; Core-backed enrollment remains the default. |
+| Telemetry Agent | chore/v0.1.4a-next — db6559e80d8c00461c87a94f40150c26a58b2858 | Existing Core enrollment remains the default. An explicit Fleet-origin CLI path now supports invitation exchange/recovery, protected credential storage, and optional Supervisor provisioning. It is opt-in and does not replace the Core path. |
 
-The reports reconcile: Fleet routes exist in source but enrollment and OpAMP remain disabled by default. Core uses the same invitation, status and installation lookup paths, while cancellation and lifecycle gate compensation are not fully aligned. Agent has an explicit Fleet-origin CLI path; the existing Core enrollment remains the default. Local real-service UAT verified the exercised invitation, exchange, Core binding sync, OpAMP session and metrics path. This does not approve the proposed wire contract or prove cancellation, revocation, logs, traces, or per-Agent metric attribution.
+The reports reconcile: Fleet routes exist in source but enrollment and OpAMP remain disabled by default. Core and Fleet now have source-level parity for invitation cancellation and versioned two-phase gate compensation. Agent has an explicit Fleet-origin CLI path; the existing Core enrollment remains the default. Local real-service UAT verified invitation, exchange, Core binding sync, Supervisor session, and OTLP metrics. The 2026-11-23 follow-up verified cancellation, gate compensation, and revocation with Fleet HTTP/Mongo tests. Current Prometheus UAT metrics have no agent_id or installation_id labels; the Gateway has no logs or traces pipeline. These results do not approve the proposed wire contract.
 
 ## Proposed flow
 
@@ -37,12 +37,13 @@ See [OpenAPI proposal](../openapi/agent-registration-v1-proposal.openapi.yaml). 
 | Create/replay invitation | POST /internal/v1/enrollment/invitations | Core mTLS |
 | Read operation | GET /internal/v1/enrollment/operations/{operation_id} | Core mTLS; secret-free |
 | Cancel pending invitation | POST /internal/v1/enrollment/invitations/{invitation_id}/cancel | Core mTLS |
-| Change Node gate | POST /internal/v1/enrollment/nodes/{node_id}/gate | Core mTLS |
+| Close Node gate | POST /internal/v1/nodes/{node_id}/enrollment-gate/close | Core mTLS; returns version and prior binding/state |
+| Complete or compensate gate | PUT /internal/v1/nodes/{node_id}/enrollment-gate | Core mTLS; exact close operation and version required |
 | Exchange | POST /v1/enrollment/exchanges | Agent HTTPS |
 | Recover uncertain exchange | POST /v1/enrollment/recoveries | Agent HTTPS |
 | Read installation | GET /internal/v1/installations/{agent_id} | Core mTLS; secret-free |
 | Read active installation | GET /internal/v1/nodes/{node_id}/active-installation | Core mTLS; secret-free |
-| Revoke credential | POST /internal/v1/agents/{agent_id}/revoke | Core mTLS; proposal, not implemented |
+| Revoke credentials | POST /internal/v1/agents/{agent_id}/revoke | Core mTLS; idempotently fences active credentials |
 
 ### Wire, identity and security rules
 
@@ -65,16 +66,16 @@ OPEN permits authorized invitation/exchange. CLOSED rejects new invitations and 
 
 | Boundary | Current state | Required change |
 |---|---|---|
-| Core → Fleet invitation | The current Core and Fleet branches use /internal/v1/enrollment/invitations, requested_ttl_seconds, X-ARIMMS-Operation-Id and Idempotency-Key. Fleet also requires the forwarded actor-attribution header and authenticates the Core certificate. Real local mTLS invitation creation and exact replay passed. | Keep the wire details PROPOSED until all owners approve the same OpenAPI SHA; preserve stable operation/key on retries. |
-| Core → Fleet status/gate/cancel | Operation status and installation lookup paths are mounted in Fleet and used by Core. Core lifecycle adapters still have cancellation and two-step gate compensation calls, while Fleet has no cancel route and currently mounts one gate mutation. | Resolve cancellation and gate compensation parity; keep status and installation responses secret-free. |
+| Core → Fleet invitation | Current Core and Fleet source use /internal/v1/enrollment/invitations, requested_ttl_seconds, X-ARIMMS-Operation-Id and Idempotency-Key. Fleet also requires the forwarded actor-attribution header and authenticates the Core certificate. Real local mTLS invitation creation and exact replay passed. | Keep the wire details PROPOSED until all owners approve the same OpenAPI SHA; preserve stable operation/key on retries. |
+| Core → Fleet status/gate/cancel | Operation status and installation lookup paths are mounted in Fleet and used by Core. Core lifecycle adapters and Fleet use matching cancellation and two-phase close/complete paths in source. Fleet exposes per-Agent credential revocation, but Core has no Fleet revocation orchestration yet. | Agree on cancellation/gate semantics and add authorized Core revocation orchestration if revocation is accepted into v1; keep status and installation responses secret-free. |
 | Agent → Fleet | Existing Core enrollment remains default; explicit Fleet-origin enrollment/recovery and protected credential storage are implemented on the Agent branch. Local real-service registration and Supervisor provisioning passed. | Keep Fleet mode explicit until contract agreement and production rollout; preserve Core mode during migration. |
-| Fleet → Supervisor | Verifier, callback auth, Mongo UID binding, Application wiring exist; OPAMP_ENABLED defaults false. Exchange omits scope/expiry metadata; HTTP revoke and rotation are absent. | Keep disabled until security and real Agent/Supervisor integration pass. |
+| Fleet → Supervisor | Verifier, callback auth, Mongo UID binding, Application wiring exist; OPAMP_ENABLED defaults false. Exchange returns opamp.connect scope and null expiry. Fleet revoke is mounted and tested; rotation is not implemented or agreed. | Keep disabled until security and real Agent/Supervisor integration pass. |
 | Registration → telemetry | Separate Agent Gateway config; enrollment has no OTLP receipt. | Verify backend delivery as a separate UAT gate. |
 
 ## Repository implementation and tests
 
 1. **Shared:** approve choices, then adopt OpenAPI and update C01/C04.
-2. **Fleet:** align routes/DTOs/errors and mTLS; header idempotency; preserve invitation replay and encrypted 24-hour recovery; add approved cancel/revoke. Test auth, replay/conflict, response loss, gate race, redaction, revoke and UID binding/reconnect.
+2. **Fleet:** source implements mTLS-protected routes, invitation replay and encrypted recovery, cancellation, versioned gate compensation, and per-Agent revoke. Mongo/HTTP tests cover cancellation/replay, stale gate completion, binding snapshot, and revoke fencing; shared wire details remain proposed. Credential rotation is unimplemented pending an agreed recovery and overlap policy.
 3. **Core:** retain human/Node authorization; align adapter/Problem mapping; same operation/key; test mTLS, uncertain response, no-store, gate compensation and denied auth.
 4. **Agent:** add explicit Fleet target without silently replacing Core enrollment; persist attempt/token/proof, protect credential, provision only to Supervisor. Test restart recovery, retained/fresh Supervisor state, revoke and redaction.
 5. **Integration/UAT:** Core + Mongo Fleet + production Agent + pinned Supervisor v0.160.0; verify exchange/recovery, OpAMP auth/UID, shutdown/reconnect, then separately verify OTLP at backend.
@@ -84,8 +85,8 @@ OPEN permits authorized invitation/exchange. CLOSED rejects new invitations and 
 1. Route roots, Core mTLS identity, actor audit header.
 2. Idempotency scope/retention and token replay until invitation terminal state.
 3. Agent proof persistence and 24-hour recovery.
-4. OpAMP-only scope, null-expiry v1, rotation delivery.
-5. Unseen-gate default and Core close/reopen ordering.
-6. Problem schema/codes and cancel/revoke routes in v1.
+4. OpAMP-only scope, null-expiry v1, and safe credential rotation/recovery delivery (not implemented).
+5. Unseen-gate default and Core close/reopen ordering. The current Fleet implementation assumes OPEN for an unseen Node and version-fences compensation.
+6. Problem-code mapping, Core authorization/orchestration for Fleet revocation, and whether revocation belongs in v1. Rotation and replacement-credential delivery remain unimplemented until recovery, overlap, and lost-response behavior are agreed.
 7. Coexistence/migration from Core enrollment; no shared migration contract exists.
-8. Whether OTLP is acceptance after registration; recommended as a separate stage.
+8. Whether OTLP is acceptance after registration; keep Collector readiness and OTLP receipt as separate evidence. Per-Agent resource attribution, and logs/traces storage/export paths, are not verified by the current UAT.

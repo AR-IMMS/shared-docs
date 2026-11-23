@@ -63,7 +63,7 @@ paths:
   /internal/v1/enrollment/invitations/{invitation_id}/cancel:
     post:
       operationId: cancelInvitation
-      description: Proposed route; not mounted by the current Fleet HTTP adapter. Cancels an unconsumed invitation and does not revoke an issued credential.
+      description: Mounted in current Fleet source. Cancels only an unconsumed invitation when the operation_id matches its original create operation; it does not revoke an issued credential. This wire shape remains PROPOSED pending owner agreement.
       security: [{ CoreMutualTLS: [] }]
       parameters:
         - { $ref: '#/components/parameters/OperationId' }
@@ -75,7 +75,7 @@ paths:
         required: true
         content: { application/json: { schema: { $ref: '#/components/schemas/OperationRequest' } } }
       responses:
-        '200': { description: Cancelled or already terminal }
+        '204': { description: Cancelled or already terminal }
         '404': { $ref: './fleet-api-baseline.openapi.yaml#/components/responses/Problem' }
         '409': { $ref: './fleet-api-baseline.openapi.yaml#/components/responses/Problem' }
         '503': { $ref: './fleet-api-baseline.openapi.yaml#/components/responses/Problem' }
@@ -99,6 +99,46 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Gate' }
+        '409': { $ref: './fleet-api-baseline.openapi.yaml#/components/responses/Problem' }
+        '503': { $ref: './fleet-api-baseline.openapi.yaml#/components/responses/Problem' }
+  /internal/v1/nodes/{node_id}/enrollment-gate/close:
+    post:
+      operationId: closeNodeEnrollmentGate
+      description: Implemented in current Fleet source and called by Core lifecycle coordination. Atomically closes the gate, returns its previous state and active Fleet binding, and fences later completion by version. Contract remains PROPOSED.
+      security: [{ CoreMutualTLS: [] }]
+      parameters:
+        - { $ref: './fleet-api-baseline.openapi.yaml#/components/parameters/RequestIdHeader' }
+        - { $ref: '#/components/parameters/OperationId' }
+        - name: node_id
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 128 }
+      responses:
+        '200':
+          description: Fenced gate snapshot
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CloseGateResult' }
+        '409': { $ref: './fleet-api-baseline.openapi.yaml#/components/responses/Problem' }
+        '503': { $ref: './fleet-api-baseline.openapi.yaml#/components/responses/Problem' }
+  /internal/v1/nodes/{node_id}/enrollment-gate:
+    put:
+      operationId: completeNodeEnrollmentGate
+      description: Implemented in current Fleet source and called by Core lifecycle coordination. Commits CLOSED or compensates to previous_state using the close operation_id and version. Stale or conflicting completions fail.
+      security: [{ CoreMutualTLS: [] }]
+      parameters:
+        - { $ref: './fleet-api-baseline.openapi.yaml#/components/parameters/RequestIdHeader' }
+        - { $ref: '#/components/parameters/OperationId' }
+        - name: node_id
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 128 }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/CompleteGate' } } }
+      responses:
+        '204': { description: Completion or exact retry }
+        '404': { $ref: './fleet-api-baseline.openapi.yaml#/components/responses/Problem' }
         '409': { $ref: './fleet-api-baseline.openapi.yaml#/components/responses/Problem' }
         '503': { $ref: './fleet-api-baseline.openapi.yaml#/components/responses/Problem' }
   /v1/enrollment/exchanges:
@@ -197,17 +237,14 @@ paths:
   /internal/v1/agents/{agent_id}/revoke:
     post:
       operationId: revokeCredential
-      description: Proposed only; absent from Fleet HTTP today. Persist revocation before denying sessions; does not stop Collector.
+      description: Mounted in current Fleet source behind Core mutual TLS. Revokes all active Fleet credentials for one agent_id; it does not stop Collector. Rotation and cross-service error/idempotency policy remain OPEN.
       security: [{ CoreMutualTLS: [] }]
       parameters:
-        - { $ref: '#/components/parameters/OperationId' }
+        - { $ref: './fleet-api-baseline.openapi.yaml#/components/parameters/RequestIdHeader' }
         - name: agent_id
           in: path
           required: true
           schema: { type: string, format: uuid }
-      requestBody:
-        required: true
-        content: { application/json: { schema: { $ref: '#/components/schemas/OperationRequest' } } }
       responses:
         '204': { description: Revoked or already revoked }
         '404': { $ref: './fleet-api-baseline.openapi.yaml#/components/responses/Problem' }
@@ -261,6 +298,33 @@ components:
         status: { type: string, enum: [PENDING, EXCHANGED, CANCELLED, EXPIRED] }
         agent_id: { type: string, format: uuid }
         credential_id: { type: string }
+    CloseGateResult:
+      type: object
+      additionalProperties: false
+      required: [node_id, operation_id, version, previous_state, active_binding]
+      properties:
+        node_id: { type: string }
+        operation_id: { type: string }
+        version: { type: integer, minimum: 1 }
+        previous_state: { type: string, enum: [OPEN, CLOSED] }
+        active_binding:
+          oneOf:
+            - type: 'null'
+            - type: object
+              additionalProperties: false
+              required: [installation_id, binding_id]
+              properties:
+                installation_id: { type: string, format: uuid }
+                binding_id: { type: string }
+    CompleteGate:
+      type: object
+      additionalProperties: false
+      required: [schema_version, operation_id, version, state]
+      properties:
+        schema_version: { type: integer, const: 1 }
+        operation_id: { type: string, minLength: 1, maxLength: 128 }
+        version: { type: integer, minimum: 1 }
+        state: { type: string, enum: [OPEN, CLOSED] }
     ChangeGate:
       type: object
       additionalProperties: false
