@@ -81,3 +81,8 @@ Decision labels: **ACCEPTED** means approved architecture/ownership;
 **PROPOSED** means a reviewable candidate; **OPEN** means an unresolved decision
 requiring its named owners. This documentation update does not promote proposed
 endpoints, fields or policies to accepted contracts.
+
+
+## Implementation snapshot (2026-11-23)
+
+See [Agent Registration v1 — Shared Review Proposal](agent-registration-v1-proposal.md). Fleet enrollment routes exist on its agent-registration branch and remain provisional and disabled by default. Core invitation, status, and installation lookup adapters now use matching Fleet routes; cancellation and two-step lifecycle gate compensation still need parity. Telemetry Agent has an explicit Fleet-origin CLI path while Core enrollment remains the default. Local real-service UAT verified invitation through OpAMP and metrics delivery; this does not approve the proposed contract or establish logs, traces, cancellation, revocation, or per-Agent metric attribution.

@@ -168,3 +168,8 @@ The current Fleet branch implements a Mongo-backed verifier that looks up SHA-25
 The current record has no expiry field; `ACTIVE` credentials remain valid until explicitly revoked. This is an implementation limitation while expiry/rotation policy is **OPEN**, and must be resolved before production listener activation.
 
 Required cross-system acceptance test: run the exact official `cmd/opampsupervisor/v0.160.0` binary with a persistent `storage.directory`, capture the OpAMP UID, stop and restart using that same directory, and compare the UID. Repeat with a fresh storage directory to observe reset behavior. The repository defines UID continuity on Ubuntu and Windows, plus Mongo-backed binding/revocation and application-level wiring acceptance on Ubuntu. The jobs download the official binary and verify its published SHA-256 sidecar and module build information. **UID continuity and Mongo-backed binding/revocation hosted checks passed; the new Application.Run wiring test is awaiting its hosted run.** The tests do not establish a recovery or rebind policy. The pinned Supervisor README documents persistent storage and restart reuse, but this alone does not prove UID continuity.
+
+
+## Shared Agent Registration v1 proposal (2026-11-23)
+
+Review-only route/schema proposal, compatibility matrix, open decisions and test plan: [Agent Registration v1 — Shared Review Proposal](agent-registration-v1-proposal.md). Companion [OpenAPI proposal](../openapi/agent-registration-v1-proposal.openapi.yaml). This addition does not approve wire details.

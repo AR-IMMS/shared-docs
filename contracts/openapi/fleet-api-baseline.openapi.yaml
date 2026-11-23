@@ -1,0 +1,315 @@
+openapi: 3.1.2
+
+info:
+  title: AR-IMMS Fleet REST API Baseline
+  version: 0.1.0
+  description: |
+    Draft reusable components for the Fleet Manager REST API.
+
+    This document does not define endpoint paths or approve payloads for
+    Core-to-Fleet or Agent-to-Fleet operations. Each boundary contract must
+    explicitly adopt the relevant components.
+
+    Native OpAMP communication is outside this REST baseline.
+
+    Decision status:
+    - Response envelopes and common Problem Details: PROPOSED.
+    - Endpoint paths, authentication, schemas, error codes, idempotency
+      scopes, and retention: defined by each approved boundary contract.
+    - Agent compatibility must be verified before changing production
+      enrollment or reporting behavior.
+
+    Versioning:
+    - API URL versions belong to concrete service specifications.
+    - info.version identifies this baseline document, not an API URL version.
+
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+
+paths: {}
+
+components:
+  headers:
+    X-Request-Id:
+      description: |
+        Correlation identifier for one HTTP request.
+
+        The server generates an identifier when the caller does not provide
+        one. Caller-provided values must be validated before reuse. The server
+        returns the selected value in the response header.
+
+        A request ID does not authorize an action and is not an idempotency key.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+
+    Idempotency-Key:
+      description: |
+        Caller-provided key for operations that explicitly support durable
+        idempotency. Each operation must define whether the key is required,
+        its scope and retention, and conflict behavior for a changed request.
+
+        An idempotency key is distinct from request_id and operation_id unless
+        a specific operation contract defines otherwise.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 255
+
+  parameters:
+    RequestIdHeader:
+      name: X-Request-Id
+      in: header
+      required: false
+      description: Optional caller-provided request correlation identifier.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+
+    IdempotencyKeyHeader:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: |
+        Idempotency key when supported by the specific operation.
+        The operation must document its scope, retention, and retry behavior.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 255
+
+    PageSize:
+      name: page_size
+      in: query
+      required: false
+      description: |
+        Maximum number of resources to return. The concrete endpoint must
+        define its default and maximum.
+      schema:
+        type: integer
+        minimum: 1
+
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: |
+        Opaque continuation cursor. Clients must not construct or interpret it.
+        Each endpoint defines its ordering and cursor scope.
+      schema:
+        type: string
+        minLength: 1
+
+  schemas:
+    Meta:
+      type: object
+      description: Metadata for one HTTP response.
+      required:
+        - request_id
+      properties:
+        request_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: |
+            Request correlation identifier. Matches the X-Request-Id
+            response header when this baseline is adopted.
+        trace_id:
+          type: string
+          pattern: '^[0-9a-f]{32}$'
+          description: |
+            Trace identifier, present only when available from valid tracing
+            instrumentation.
+      examples:
+        - request_id: req_01J9K8X3
+          trace_id: 4bf92f3577b34da6a3ce929d0e0e4736
+
+    SingleResponse:
+      type: object
+      description: |
+        Proposed envelope for a single REST result. Each operation defines
+        the concrete data schema and whether it adopts this envelope.
+      required:
+        - data
+        - meta
+      properties:
+        data: {}
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    ListResponse:
+      type: object
+      description: |
+        Proposed envelope for a collection. Each operation defines its item
+        schema and whether pagination is supported.
+      required:
+        - data
+        - meta
+      properties:
+        data:
+          type: array
+          items: {}
+        meta:
+          $ref: '#/components/schemas/Meta'
+        pagination:
+          $ref: '#/components/schemas/CursorPagination'
+
+    CursorPagination:
+      type: object
+      description: Cursor pagination metadata.
+      required:
+        - type
+        - next_cursor
+      properties:
+        type:
+          type: string
+          const: cursor
+        next_cursor:
+          type:
+            - string
+            - 'null'
+          description: Opaque next-page cursor; null means no next page.
+      examples:
+        - type: cursor
+          next_cursor: null
+
+    ErrorCode:
+      type: string
+      pattern: '^[A-Z][A-Z0-9_]{1,63}$'
+      description: |
+        Stable machine-readable error code. Concrete operations define their
+        supported codes. Clients must not parse detail or title text.
+      examples:
+        - VALIDATION_ERROR
+        - RESOURCE_NOT_FOUND
+
+    ValidationErrorCode:
+      type: string
+      enum:
+        - INVALID_TYPE
+        - INVALID_FORMAT
+        - OUT_OF_RANGE
+        - UNKNOWN_FIELD
+        - INVALID_VALUE
+
+    FieldError:
+      type: object
+      required:
+        - field
+        - code
+        - message
+      properties:
+        field:
+          type: array
+          description: Path using object keys and nonnegative array indexes.
+          items:
+            oneOf:
+              - type: string
+              - type: integer
+                minimum: 0
+          examples:
+            - [agent_id]
+            - [items, 0, endpoint]
+        code:
+          $ref: '#/components/schemas/ValidationErrorCode'
+        message:
+          type: string
+          description: Human-readable explanation without sensitive values.
+
+    Problem:
+      type: object
+      description: |
+        Proposed RFC 9457 Problem Details response with AR-IMMS extensions.
+
+        The body status must match the HTTP response status. Clients should
+        ignore unknown extensions. Neither instance nor detail may contain
+        secrets, raw credentials, or private connection strings.
+      required:
+        - type
+        - title
+        - status
+        - detail
+        - instance
+        - code
+        - request_id
+      properties:
+        type:
+          type: string
+          format: uri-reference
+          description: Problem type URI reference.
+          examples:
+            - about:blank
+        title:
+          type: string
+          description: Short description of the problem type.
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        detail:
+          type: string
+          description: Nonsecret explanation of this occurrence.
+        instance:
+          type: string
+          format: uri-reference
+          description: |
+            Identifier for this error occurrence. Do not include sensitive
+            request data in the URI.
+        code:
+          $ref: '#/components/schemas/ErrorCode'
+        request_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        trace_id:
+          type: string
+          pattern: '^[0-9a-f]{32}$'
+        errors:
+          type: array
+          description: Optional field-level validation errors.
+          items:
+            $ref: '#/components/schemas/FieldError'
+      examples:
+        - type: about:blank
+          title: Request validation failed
+          status: 400
+          detail: One or more fields are invalid.
+          instance: /problems/req_01J9K8X3
+          code: VALIDATION_ERROR
+          request_id: req_01J9K8X3
+          errors:
+            - field: [agent_id]
+              code: INVALID_FORMAT
+              message: Must be a valid UUID.
+
+  responses:
+    Problem:
+      description: Request failed with a Problem Details response.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/X-Request-Id'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+
+    SingleResponse:
+      description: Single REST result using the proposed envelope.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/X-Request-Id'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SingleResponse'
+
+    ListResponse:
+      description: REST collection using the proposed envelope.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/X-Request-Id'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ListResponse'

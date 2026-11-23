@@ -1,0 +1,322 @@
+openapi: 3.1.2
+info:
+  title: AR-IMMS Agent Registration API Proposal
+  version: 1.0.0-proposal
+  description: PROPOSED review draft; not an approved wire contract. Some routes exist on the Fleet branch but remain disabled by default; OpAMP WSS and OTLP are separate.
+x-contract-status: PROPOSED
+servers:
+  - url: https://fleet.example.com
+paths:
+  /internal/v1/enrollment/invitations:
+    post:
+      operationId: createOrReplayInvitation
+      description: Core authorizes human and Node; Fleet verifies Core mTLS. Same key and fingerprint replay pending token; changed input conflicts. No-store.
+      security: [{ CoreMutualTLS: [] }]
+      parameters:
+        - { $ref: './fleet-api-baseline.openapi.yaml#/components/parameters/RequestIdHeader' }
+        - { $ref: '#/components/parameters/OperationId' }
+        - { $ref: './fleet-api-baseline.openapi.yaml#/components/parameters/IdempotencyKeyHeader' }
+        - { $ref: '#/components/parameters/ActorId' }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/CreateInvitation' } } }
+      responses:
+        '201':
+          description: Created
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Invitation' }
+        '200':
+          description: Exact pending replay
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Invitation' }
+        '400': { $ref: './fleet-api-baseline.openapi.yaml#/components/responses/Problem' }
+        '401': { $ref: './fleet-api-baseline.openapi.yaml#/components/responses/Problem' }
+        '409': { $ref: './fleet-api-baseline.openapi.yaml#/components/responses/Problem' }
+        '429': { $ref: './fleet-api-baseline.openapi.yaml#/components/responses/Problem' }
+        '503': { $ref: './fleet-api-baseline.openapi.yaml#/components/responses/Problem' }
+  /internal/v1/enrollment/operations/{operation_id}:
+    get:
+      operationId: getEnrollmentOperation
+      security: [{ CoreMutualTLS: [] }]
+      parameters:
+        - { $ref: './fleet-api-baseline.openapi.yaml#/components/parameters/RequestIdHeader' }
+        - name: operation_id
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 128 }
+      responses:
+        '200':
+          description: Secret-free status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OperationStatus' }
+        '404': { $ref: './fleet-api-baseline.openapi.yaml#/components/responses/Problem' }
+        '503': { $ref: './fleet-api-baseline.openapi.yaml#/components/responses/Problem' }
+  /internal/v1/enrollment/invitations/{invitation_id}/cancel:
+    post:
+      operationId: cancelInvitation
+      description: Proposed route; not mounted by the current Fleet HTTP adapter. Cancels an unconsumed invitation and does not revoke an issued credential.
+      security: [{ CoreMutualTLS: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/OperationId' }
+        - name: invitation_id
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 128 }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/OperationRequest' } } }
+      responses:
+        '200': { description: Cancelled or already terminal }
+        '404': { $ref: './fleet-api-baseline.openapi.yaml#/components/responses/Problem' }
+        '409': { $ref: './fleet-api-baseline.openapi.yaml#/components/responses/Problem' }
+        '503': { $ref: './fleet-api-baseline.openapi.yaml#/components/responses/Problem' }
+  /internal/v1/enrollment/nodes/{node_id}/gate:
+    post:
+      operationId: changeNodeGate
+      description: CLOSED rejects new invitation and unconsumed exchange. Serializes with exchange; close does not revoke credentials or end sessions.
+      security: [{ CoreMutualTLS: [] }]
+      parameters:
+        - { $ref: './fleet-api-baseline.openapi.yaml#/components/parameters/RequestIdHeader' }
+        - name: node_id
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 128 }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ChangeGate' } } }
+      responses:
+        '200':
+          description: Gate and binding state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Gate' }
+        '409': { $ref: './fleet-api-baseline.openapi.yaml#/components/responses/Problem' }
+        '503': { $ref: './fleet-api-baseline.openapi.yaml#/components/responses/Problem' }
+  /v1/enrollment/exchanges:
+    post:
+      operationId: exchangeInvitation
+      description: HTTPS. Persist immutable attempt first. Exact retry replays; changed input conflicts. Credential scope opamp.connect only; no-store.
+      parameters: [{ $ref: './fleet-api-baseline.openapi.yaml#/components/parameters/RequestIdHeader' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/Exchange' } } }
+      responses:
+        '201':
+          description: Issued
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnrollmentResult' }
+        '200':
+          description: Exact retry
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnrollmentResult' }
+        '400': { $ref: './fleet-api-baseline.openapi.yaml#/components/responses/Problem' }
+        '401': { $ref: './fleet-api-baseline.openapi.yaml#/components/responses/Problem' }
+        '409': { $ref: './fleet-api-baseline.openapi.yaml#/components/responses/Problem' }
+        '410': { $ref: './fleet-api-baseline.openapi.yaml#/components/responses/Problem' }
+        '429': { $ref: './fleet-api-baseline.openapi.yaml#/components/responses/Problem' }
+        '503': { $ref: './fleet-api-baseline.openapi.yaml#/components/responses/Problem' }
+  /v1/enrollment/recoveries:
+    post:
+      operationId: recoverExchange
+      description: Original result only for matching attempt, agent_id, and same proof. Encrypted escrow expires after 24 hours; never issues a credential.
+      parameters: [{ $ref: './fleet-api-baseline.openapi.yaml#/components/parameters/RequestIdHeader' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/Recovery' } } }
+      responses:
+        '200':
+          description: Original result
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnrollmentResult' }
+        '400': { $ref: './fleet-api-baseline.openapi.yaml#/components/responses/Problem' }
+        '401': { $ref: './fleet-api-baseline.openapi.yaml#/components/responses/Problem' }
+        '410': { $ref: './fleet-api-baseline.openapi.yaml#/components/responses/Problem' }
+        '429': { $ref: './fleet-api-baseline.openapi.yaml#/components/responses/Problem' }
+        '503': { $ref: './fleet-api-baseline.openapi.yaml#/components/responses/Problem' }
+  /internal/v1/installations/{agent_id}:
+    get:
+      operationId: getInstallationByAgentId
+      description: Secret-free Core lookup; mounted on the current Fleet branch and guarded by Core mutual TLS.
+      security: [{ CoreMutualTLS: [] }]
+      parameters:
+        - { $ref: './fleet-api-baseline.openapi.yaml#/components/parameters/RequestIdHeader' }
+        - name: agent_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Installation identity and lifecycle state, without credentials or Supervisor UID.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Installation' }
+        '401': { $ref: './fleet-api-baseline.openapi.yaml#/components/responses/Problem' }
+        '404': { $ref: './fleet-api-baseline.openapi.yaml#/components/responses/Problem' }
+        '503': { $ref: './fleet-api-baseline.openapi.yaml#/components/responses/Problem' }
+  /internal/v1/nodes/{node_id}/active-installation:
+    get:
+      operationId: getActiveInstallationByNodeId
+      description: Secret-free Core lookup; returns the active installation for the Node, if one exists.
+      security: [{ CoreMutualTLS: [] }]
+      parameters:
+        - { $ref: './fleet-api-baseline.openapi.yaml#/components/parameters/RequestIdHeader' }
+        - name: node_id
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 128 }
+      responses:
+        '200':
+          description: Active installation identity and lifecycle state, without credentials or Supervisor UID.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Installation' }
+        '401': { $ref: './fleet-api-baseline.openapi.yaml#/components/responses/Problem' }
+        '404': { $ref: './fleet-api-baseline.openapi.yaml#/components/responses/Problem' }
+        '503': { $ref: './fleet-api-baseline.openapi.yaml#/components/responses/Problem' }
+  /internal/v1/agents/{agent_id}/revoke:
+    post:
+      operationId: revokeCredential
+      description: Proposed only; absent from Fleet HTTP today. Persist revocation before denying sessions; does not stop Collector.
+      security: [{ CoreMutualTLS: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/OperationId' }
+        - name: agent_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/OperationRequest' } } }
+      responses:
+        '204': { description: Revoked or already revoked }
+        '404': { $ref: './fleet-api-baseline.openapi.yaml#/components/responses/Problem' }
+        '503': { $ref: './fleet-api-baseline.openapi.yaml#/components/responses/Problem' }
+components:
+  securitySchemes:
+    CoreMutualTLS:
+      type: mutualTLS
+      description: Fleet verifies configured Core client certificate and TLS server identity.
+  parameters:
+    OperationId: { name: X-ARIMMS-Operation-Id, in: header, required: true, schema: { type: string, minLength: 1, maxLength: 128 } }
+    ActorId: { name: X-ARIMMS-Actor-Id, in: header, required: true, description: Core audit attribution only, schema: { type: string, minLength: 1, maxLength: 128 } }
+  schemas:
+    CreateInvitation:
+      type: object
+      additionalProperties: false
+      required: [schema_version, operation_id, node_id]
+      properties:
+        schema_version: { type: integer, const: 1 }
+        operation_id: { type: string, minLength: 1, maxLength: 128 }
+        node_id: { type: string, minLength: 1, maxLength: 128 }
+        requested_ttl_seconds: { type: integer, minimum: 60, maximum: 86400, default: 1800 }
+    Invitation:
+      type: object
+      additionalProperties: false
+      required: [schema_version, operation_id, invitation_id, node_id, status, expires_at, invitation_token]
+      properties:
+        schema_version: { type: integer, const: 1 }
+        operation_id: { type: string }
+        invitation_id: { type: string }
+        node_id: { type: string }
+        status: { type: string, const: PENDING }
+        expires_at: { type: string, format: date-time }
+        invitation_token: { type: string, minLength: 32, x-sensitive: true }
+    OperationRequest:
+      type: object
+      additionalProperties: false
+      required: [schema_version, operation_id]
+      properties:
+        schema_version: { type: integer, const: 1 }
+        operation_id: { type: string }
+    OperationStatus:
+      type: object
+      additionalProperties: false
+      required: [schema_version, operation_id, invitation_id, node_id, status]
+      properties:
+        schema_version: { type: integer, const: 1 }
+        operation_id: { type: string }
+        invitation_id: { type: string }
+        node_id: { type: string }
+        status: { type: string, enum: [PENDING, EXCHANGED, CANCELLED, EXPIRED] }
+        agent_id: { type: string, format: uuid }
+        credential_id: { type: string }
+    ChangeGate:
+      type: object
+      additionalProperties: false
+      required: [schema_version, operation_id, status]
+      properties:
+        schema_version: { type: integer, const: 1 }
+        operation_id: { type: string }
+        status: { type: string, enum: [OPEN, CLOSED] }
+    Gate:
+      type: object
+      additionalProperties: false
+      required: [schema_version, node_id, status, operation_id, version, bound_agent_ids]
+      properties:
+        schema_version: { type: integer, const: 1 }
+        node_id: { type: string }
+        status: { type: string, enum: [OPEN, CLOSED] }
+        operation_id: { type: string }
+        version: { type: integer, minimum: 1 }
+        bound_agent_ids: { type: array, items: { type: string, format: uuid } }
+    Exchange:
+      type: object
+      additionalProperties: false
+      required: [enrollment_attempt_id, agent_id, invitation_token, recovery_proof]
+      properties:
+        enrollment_attempt_id: { type: string, format: uuid }
+        agent_id: { type: string, format: uuid }
+        invitation_token: { type: string, minLength: 32, x-sensitive: true }
+        recovery_proof: { type: string, minLength: 32, writeOnly: true }
+    Recovery:
+      type: object
+      additionalProperties: false
+      required: [enrollment_attempt_id, agent_id, recovery_proof]
+      properties:
+        enrollment_attempt_id: { type: string, format: uuid }
+        agent_id: { type: string, format: uuid }
+        recovery_proof: { type: string, minLength: 32, writeOnly: true }
+    EnrollmentResult:
+      type: object
+      additionalProperties: false
+      required: [agent_id, node_id, credential_id, credential, credential_scope, opamp_endpoint, credential_expires_at]
+      properties:
+        agent_id: { type: string, format: uuid }
+        node_id: { type: string }
+        credential_id: { type: string }
+        credential: { type: string, minLength: 32, x-sensitive: true }
+        credential_scope: { type: string, const: opamp.connect }
+        opamp_endpoint: { type: string, format: uri }
+        credential_expires_at:
+          type: [string, 'null']
+          format: date-time
+          description: Null means valid until explicit revocation in proposed v1.
+    Installation:
+      type: object
+      additionalProperties: false
+      required: [installation_id, node_id, status]
+      properties:
+        installation_id: { type: string, format: uuid, description: Same persistent installation identity as agent_id. }
+        node_id: { type: string, minLength: 1, maxLength: 128 }
+        status: { type: string, enum: [ACTIVE, REVOKED] }
